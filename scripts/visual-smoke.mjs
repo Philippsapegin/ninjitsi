@@ -27,6 +27,10 @@ const screenshotPath =
 const browser = await chromium.launch({ executablePath, headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
+await page.addInitScript(() => {
+  window.__NINJITSI_CONFIG__ = { jitsiUrl: "" };
+});
+
 page.on("console", (message) => {
   if (message.type() === "error") {
     console.error(`[browser console] ${message.text()}`);
@@ -37,7 +41,19 @@ page.on("pageerror", (pageError) => {
 });
 
 try {
-  await page.goto(`${baseUrl}/room/visual-check`, {
+  const createResponse = await fetch(`${baseUrl}/api/rooms`, {
+    body: JSON.stringify({ password: "" }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+
+  if (!createResponse.ok) {
+    throw new Error(`Сервер не создал тестовую комнату: ${createResponse.status}`);
+  }
+
+  const { room } = await createResponse.json();
+
+  await page.goto(`${baseUrl}/room/${room.code}`, {
     waitUntil: "networkidle",
   });
   await page.getByLabel("Ваше имя").fill("Visual Tester");

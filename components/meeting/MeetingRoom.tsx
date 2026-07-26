@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowLeft,
   Check,
   Copy,
+  LoaderCircle,
   LockKeyhole,
   Maximize2,
   Radio,
+  RefreshCw,
   Users,
   WifiOff,
 } from "lucide-react";
@@ -15,6 +18,8 @@ import { useCallTimer } from "@/hooks/useCallTimer";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
 import { readPendingJoin } from "@/lib/room";
+import { authorizeRoom, getRoom, RoomApiError } from "@/lib/roomApi";
+import { useRoomApiEnabled } from "@/lib/runtimeConfig";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
 import { JoinOverlay } from "./JoinOverlay";
@@ -32,13 +37,26 @@ interface MeetingRoomProps {
   roomName: string;
 }
 
+type RoomGate =
+  | { status: "checking"; error: null }
+  | { status: "ready"; error: null }
+  | { status: "failed"; error: string };
+
 export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const conference = useJitsiConference(roomName);
+  const roomApiEnabled = useRoomApiEnabled();
   const [joinDetails, setJoinDetails] =
     useState<JoinOptions>(EMPTY_JOIN_DETAILS);
   const [joinDetailsReady, setJoinDetailsReady] = useState(false);
   const [protectedRoom, setProtectedRoom] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [admissionError, setAdmissionError] = useState("");
+  const [isAdmissionBusy, setIsAdmissionBusy] = useState(false);
+  const [roomCheckAttempt, setRoomCheckAttempt] = useState(0);
+  const [roomGate, setRoomGate] = useState<RoomGate>({
+    status: "checking",
+    error: null,
+  });
   const timer = useCallTimer(conference.status === "joined");
   const showJoinOverlay =
     conference.status === "idle" ||
@@ -62,6 +80,55 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     });
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!roomApiEnabled) {
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setRoomGate({ status: "ready", error: null });
+        }
+      });
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setRoomGate({ status: "checking", error: null });
+      }
+    });
+
+    void getRoom(roomName)
+      .then((room) => {
+        if (cancelled) {
+          return;
+        }
+
+        setProtectedRoom(room.passwordRequired);
+        setRoomGate({ status: "ready", error: null });
+      })
+      .catch((caughtError) => {
+        if (cancelled) {
+          return;
+        }
+
+        setRoomGate({
+          status: "failed",
+          error:
+            caughtError instanceof RoomApiError
+              ? caughtError.message
+              : "Не удалось проверить комнату на сервере.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomApiEnabled, roomCheckAttempt, roomName]);
+
   const participantLabel = useMemo(() => {
     const count = conference.participants.length;
     const lastTwoDigits = count % 100;
@@ -81,9 +148,32 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
   async function join(details: JoinOptions) {
     setJoinDetails(details);
-    setProtectedRoom(Boolean(details.password));
+
+    if (!roomApiEnabled) {
+      setProtectedRoom(Boolean(details.password));
+    }
+
     localStorage.setItem("ninjitsi.displayName", details.displayName);
-    await conference.join(details);
+    setAdmissionError("");
+    setIsAdmissionBusy(true);
+
+    try {
+      if (roomApiEnabled) {
+        const room = await authorizeRoom(roomName, details.password);
+
+        setProtectedRoom(room.passwordRequired);
+      }
+
+      await conference.join(details);
+    } catch (caughtError) {
+      setAdmissionError(
+        caughtError instanceof RoomApiError
+          ? caughtError.message
+          : "Сервер не разрешил вход в комнату.",
+      );
+    } finally {
+      setIsAdmissionBusy(false);
+    }
   }
 
   async function hangup() {
@@ -103,6 +193,46 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     } else {
       await document.documentElement.requestFullscreen();
     }
+  }
+
+  if (roomGate.status !== "ready") {
+    return (
+      <main className={styles.room}>
+        <div className={styles.roomGate}>
+          <Brand />
+          {roomGate.status === "checking" ? (
+            <>
+              <LoaderCircle className={styles.gateSpinner} size={28} />
+              <h1>Проверяем комнату</h1>
+              <p>Сверяем код с локальным сервером Ninjitsi.</p>
+            </>
+          ) : (
+            <>
+              <WifiOff size={28} />
+              <h1>Войти не получилось</h1>
+              <p>{roomGate.error}</p>
+              <div className={styles.gateActions}>
+                <button
+                  onClick={() => window.location.assign("/")}
+                  type="button"
+                >
+                  <ArrowLeft size={16} />
+                  На главную
+                </button>
+                <button
+                  className={styles.gatePrimary}
+                  onClick={() => setRoomCheckAttempt((attempt) => attempt + 1)}
+                  type="button"
+                >
+                  <RefreshCw size={16} />
+                  Проверить снова
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -190,13 +320,13 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
       {showJoinOverlay && joinDetailsReady && (
         <JoinOverlay
-          error={conference.error}
+          error={admissionError || conference.error}
           initialDetails={joinDetails}
           isDemo={conference.isDemo}
           key={`${joinDetails.displayName}-${joinDetails.password}-${conference.status === "failed"}`}
           onJoin={join}
           roomName={roomName}
-          status={conference.status}
+          status={isAdmissionBusy ? "loading" : conference.status}
         />
       )}
     </main>

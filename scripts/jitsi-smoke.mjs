@@ -27,7 +27,24 @@ if (!jitsiUrl) {
   );
 }
 
-const roomName = `ninjitsi-smoke-${Date.now()}`;
+async function createServerRoom() {
+  const response = await fetch(`${baseUrl}/api/rooms`, {
+    body: JSON.stringify({ password: "" }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const body = await response.json().catch(() => null);
+
+  if (!response.ok || !body?.room?.code) {
+    throw new Error(
+      `Сервер Ninjitsi не создал комнату: ${response.status} ${JSON.stringify(body)}`,
+    );
+  }
+
+  return body.room.code;
+}
+
+const roomName = await createServerRoom();
 const browser = await chromium.launch({
   args: [
     "--allow-http-screen-capture",
@@ -176,7 +193,7 @@ try {
     );
   }
 
-  const recoveryRoomName = `ninjitsi-recovery-${Date.now()}`;
+  const recoveryRoomName = await createServerRoom();
   const recoveryPage = await context.newPage();
 
   await recoveryPage.addInitScript(() => {

@@ -1,12 +1,18 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { ArrowRight, LockKeyhole, ShieldCheck, Video } from "lucide-react";
-import { Brand } from "@/components/brand/Brand";
 import {
-  normalizeRoomName,
-  savePendingJoin,
-} from "@/lib/room";
+  ArrowRight,
+  LoaderCircle,
+  LockKeyhole,
+  LogIn,
+  Plus,
+  ShieldCheck,
+  Video,
+} from "lucide-react";
+import { Brand } from "@/components/brand/Brand";
+import { normalizeRoomName, savePendingJoin } from "@/lib/room";
+import { createRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import styles from "./LandingPage.module.css";
 
 const previewPeople = [
@@ -18,36 +24,58 @@ const previewPeople = [
   { name: "Вы", tone: "slate" },
 ];
 
-function makeRoomName() {
-  const first = ["quiet", "open", "small", "soft", "clear"];
-  const second = ["studio", "kitchen", "signal", "circle", "room"];
-  const pick = (values: string[]) =>
-    values[Math.floor(Math.random() * values.length)];
-
-  return `${pick(first)}-${pick(second)}-${Math.floor(10 + Math.random() * 89)}`;
-}
+type LandingMode = "create" | "join";
 
 export function LandingPage() {
-  const [roomName, setRoomName] = useState(makeRoomName);
+  const [mode, setMode] = useState<LandingMode>("create");
+  const [roomName, setRoomName] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalizedRoom = normalizeRoomName(roomName);
 
-    if (!normalizedRoom || !displayName.trim()) {
+    if (
+      !displayName.trim() ||
+      (mode === "join" && !normalizedRoom) ||
+      isBusy
+    ) {
       return;
     }
 
-    savePendingJoin({
-      displayName: displayName.trim(),
-      password,
-      startAudioMuted: false,
-      startVideoMuted: false,
-    });
+    setError("");
+    setIsBusy(true);
 
-    window.location.assign(`/room/${encodeURIComponent(normalizedRoom)}`);
+    try {
+      const targetRoom =
+        mode === "create"
+          ? (await createRoom(password)).room.code
+          : (await getRoom(normalizedRoom)).code;
+
+      savePendingJoin({
+        displayName: displayName.trim(),
+        password,
+        startAudioMuted: false,
+        startVideoMuted: false,
+      });
+
+      window.location.assign(`/room/${encodeURIComponent(targetRoom)}`);
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof RoomApiError
+          ? caughtError.message
+          : "Не удалось связаться с сервером комнат.",
+      );
+      setIsBusy(false);
+    }
+  }
+
+  function selectMode(nextMode: LandingMode) {
+    setMode(nextMode);
+    setError("");
   }
 
   return (
@@ -74,18 +102,42 @@ export function LandingPage() {
             16:9, которая сама собирается под размер разговора.
           </p>
 
-          <form className={styles.form} onSubmit={submit}>
-            <div className={styles.fieldRow}>
-              <label className={styles.field}>
-                <span>Комната</span>
-                <input
-                  aria-label="Название комнаты"
-                  autoComplete="off"
-                  onChange={(event) => setRoomName(event.target.value)}
-                  spellCheck={false}
-                  value={roomName}
-                />
-              </label>
+          <form className={styles.form} onSubmit={(event) => void submit(event)}>
+            <div aria-label="Действие с комнатой" className={styles.modeSwitch}>
+              <button
+                aria-pressed={mode === "create"}
+                className={mode === "create" ? styles.modeActive : ""}
+                onClick={() => selectMode("create")}
+                type="button"
+              >
+                <Plus size={15} />
+                Создать
+              </button>
+              <button
+                aria-pressed={mode === "join"}
+                className={mode === "join" ? styles.modeActive : ""}
+                onClick={() => selectMode("join")}
+                type="button"
+              >
+                <LogIn size={15} />
+                Войти по коду
+              </button>
+            </div>
+
+            <div className={mode === "join" ? styles.fieldRow : undefined}>
+              {mode === "join" && (
+                <label className={styles.field}>
+                  <span>Код комнаты</span>
+                  <input
+                    aria-label="Код комнаты"
+                    autoComplete="off"
+                    onChange={(event) => setRoomName(event.target.value)}
+                    placeholder="Например, quiet-studio-04210"
+                    spellCheck={false}
+                    value={roomName}
+                  />
+                </label>
+              )}
               <label className={styles.field}>
                 <span>Ваше имя</span>
                 <input
@@ -116,13 +168,29 @@ export function LandingPage() {
               </div>
             </label>
 
+            {error && <div className={styles.formError}>{error}</div>}
+
             <button
               className={styles.primaryButton}
-              disabled={!displayName.trim() || !normalizeRoomName(roomName)}
+              disabled={
+                !displayName.trim() ||
+                (mode === "join" && !normalizeRoomName(roomName)) ||
+                isBusy
+              }
               type="submit"
             >
-              Войти в комнату
-              <ArrowRight size={18} strokeWidth={2.2} />
+              <span>
+                {isBusy
+                  ? "Связываемся с сервером"
+                  : mode === "create"
+                    ? "Создать комнату"
+                    : "Войти в комнату"}
+              </span>
+              {isBusy ? (
+                <LoaderCircle className={styles.spinner} size={18} />
+              ) : (
+                <ArrowRight size={18} strokeWidth={2.2} />
+              )}
             </button>
           </form>
 
@@ -133,7 +201,7 @@ export function LandingPage() {
             </span>
             <span>
               <Video size={16} />
-              Ссылка сразу готова
+              Код выдаёт сервер
             </span>
           </div>
         </div>

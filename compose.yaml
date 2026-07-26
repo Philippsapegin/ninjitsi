@@ -9,3 +9,8 @@ services:
     ports:
       - "${NINJITSI_PORT:-3000}:80"
     restart: unless-stopped
+    volumes:
+      - ninjitsi-data:/data
+
+volumes:
+  ninjitsi-data:

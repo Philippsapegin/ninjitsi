@@ -11,6 +11,77 @@
     #080a0d;
 }
 
+.roomGate {
+  display: flex;
+  width: min(460px, calc(100% - 80px));
+  margin: auto;
+  padding: 34px;
+  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.roomGate > svg {
+  margin-top: 19px;
+  color: var(--accent);
+}
+
+.roomGate h1 {
+  margin: 5px 0 0;
+  font-size: 25px;
+  letter-spacing: -0.04em;
+}
+
+.roomGate p {
+  max-width: 350px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.gateSpinner {
+  animation: gate-spin 850ms linear infinite;
+}
+
+.gateActions {
+  display: flex;
+  margin-top: 12px;
+  gap: 8px;
+}
+
+.gateActions button {
+  display: inline-flex;
+  height: 40px;
+  padding: 0 13px;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-soft);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.gateActions button.gatePrimary {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: transparent;
+}
+
+@keyframes gate-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .topbar {
   display: grid;
   height: 68px;

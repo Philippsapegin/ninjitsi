@@ -1,6 +1,7 @@
 .next/
 .open-next/
 .wrangler/
+.data/
 .local/
 node_modules/
 .env

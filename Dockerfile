@@ -7,10 +7,20 @@ RUN npm ci
 COPY . .
 RUN npm run build:cloudflare
 
-FROM nginx:1.29-alpine
+FROM node:22-alpine
 
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /app/.open-next/assets/ /usr/share/nginx/html/
-COPY --chmod=755 deploy/40-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
+WORKDIR /app
+ENV PORT=80
+ENV STATIC_ROOT=/app/public
+ENV DATA_DIR=/data
 
+COPY --from=builder /app/.open-next/assets/ /app/public/
+COPY server/ /app/server/
+
+VOLUME ["/data"]
 EXPOSE 80
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1/api/health >/dev/null || exit 1
+
+CMD ["node", "server/server.mjs"]

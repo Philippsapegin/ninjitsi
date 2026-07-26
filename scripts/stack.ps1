@@ -10,6 +10,14 @@ $LocalRoot = Join-Path $ProjectRoot ".local"
 $JitsiRoot = Join-Path $LocalRoot "jitsi"
 $ReleaseMarker = Join-Path $JitsiRoot ".ninjitsi-release"
 $ReleaseUrl = "https://github.com/jitsi/docker-jitsi-meet/archive/refs/tags/$JitsiVersion.zip"
+$UserDockerBin = Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\resources\bin"
+
+if (
+  -not (Get-Command "docker" -ErrorAction SilentlyContinue) -and
+  (Test-Path (Join-Path $UserDockerBin "docker.exe"))
+) {
+  $env:PATH = "$UserDockerBin;$env:PATH"
+}
 
 function Assert-Command {
   param([string]$Name)
@@ -21,6 +29,40 @@ function Assert-Command {
 
 function New-Secret {
   return ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
+}
+
+function Initialize-Docker {
+  docker info *> $null
+
+  if ($LASTEXITCODE -eq 0) {
+    return
+  }
+
+  $DesktopCandidates = @(
+    (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe"),
+    "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+  )
+  $Desktop = $DesktopCandidates |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+
+  if (-not $Desktop) {
+    throw "Docker daemon is not running and Docker Desktop was not found."
+  }
+
+  Write-Host "Starting Docker Desktop..."
+  Start-Process -FilePath $Desktop -WindowStyle Hidden
+
+  for ($Attempt = 0; $Attempt -lt 30; $Attempt += 1) {
+    Start-Sleep -Seconds 2
+    docker info *> $null
+
+    if ($LASTEXITCODE -eq 0) {
+      return
+    }
+  }
+
+  throw "Docker Desktop did not become ready within 60 seconds."
 }
 
 function Initialize-Jitsi {
@@ -103,6 +145,7 @@ if ($Action -eq "prepare") {
 }
 
 Assert-Command "docker"
+Initialize-Docker
 Initialize-Jitsi
 
 Push-Location $JitsiRoot
