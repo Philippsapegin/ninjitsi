@@ -129,42 +129,6 @@
   text-transform: uppercase;
 }
 
-.callMeta {
-  display: inline-flex;
-  height: 34px;
-  padding: 0 12px;
-  align-items: center;
-  justify-self: center;
-  gap: 8px;
-  color: var(--text-faint);
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.callMeta strong {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 680;
-}
-
-.liveDot {
-  width: 6px;
-  height: 6px;
-  background: var(--accent);
-  border-radius: 50%;
-  box-shadow: 0 0 0 4px rgba(216, 255, 99, 0.08);
-}
-
-.metaDivider {
-  width: 1px;
-  height: 15px;
-  margin: 0 2px;
-  background: var(--line-strong);
-}
-
 .headerActions {
   display: flex;
   align-items: center;
@@ -172,7 +136,7 @@
   gap: 8px;
 }
 
-.headerActions button {
+.headerActions > button {
   display: inline-flex;
   height: 36px;
   padding: 0 12px;
@@ -180,7 +144,7 @@
   gap: 7px;
   color: var(--text-soft);
   background: var(--surface);
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 10px;
   cursor: pointer;
   font-size: 10px;
@@ -190,12 +154,12 @@
     background 150ms ease;
 }
 
-.headerActions button:hover {
+.headerActions > button:hover {
   color: var(--text);
   background: var(--surface-soft);
 }
 
-.headerActions button.iconButton {
+.headerActions > button.iconButton {
   width: 36px;
   padding: 0;
   justify-content: center;

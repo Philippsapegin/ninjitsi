@@ -134,8 +134,58 @@ try {
   const chatSidebar = page.getByRole("complementary");
 
   if ((await chatSidebar.count()) !== 1) {
-    throw new Error("Не найден единственный левый чат");
+    throw new Error("Не найден единственный правый чат");
   }
+
+  const chatPosition = await chatSidebar.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+
+    return {
+      borderWidth: getComputedStyle(element).borderWidth,
+      right: bounds.right,
+      viewportWidth: document.documentElement.clientWidth,
+      width: bounds.width,
+    };
+  });
+
+  if (
+    Math.abs(chatPosition.right - chatPosition.viewportWidth) > 1 ||
+    chatPosition.borderWidth !== "0px"
+  ) {
+    throw new Error(
+      `Чат не закреплён справа или сохранил строук: ${JSON.stringify(chatPosition)}`,
+    );
+  }
+
+  await page.getByRole("button", { name: "Свернуть чат" }).click();
+  await page.waitForTimeout(260);
+  const collapsedWidth = await chatSidebar.evaluate(
+    (element) => element.getBoundingClientRect().width,
+  );
+
+  if (collapsedWidth > 45) {
+    throw new Error(`Чат не свернулся: width=${collapsedWidth}`);
+  }
+
+  await page.getByRole("button", { name: "Развернуть чат" }).click();
+  await page.waitForTimeout(260);
+
+  await page
+    .getByRole("button", { name: "Показать на сцене Visual Tester" })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Вернуть сетку из сцены Visual Tester",
+    })
+    .waitFor();
+  await page
+    .getByRole("button", {
+      name: "Вернуть сетку из сцены Visual Tester",
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Показать на сцене Visual Tester" })
+    .waitFor();
 
   await page.getByRole("button", { name: "Настройки" }).click();
   await page

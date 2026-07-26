@@ -12,12 +12,14 @@ import {
   JitsiNoiseSuppressionEffect,
 } from "./noiseSuppression";
 import type {
+  ChatAttachment,
   ChatMessage,
   JitsiConferenceLike,
   JitsiConnectionLike,
   JitsiMeetJSLibrary,
   JitsiTrackLike,
   MeetingStatus,
+  ParticipantConnectionInfo,
   ParticipantView,
 } from "./types";
 
@@ -38,6 +40,7 @@ interface ConferenceController {
   isAudioMuted: boolean;
   isDemo: boolean;
   isDeviceSwitchBusy: boolean;
+  isSendingAttachment: boolean;
   isScreenShareBusy: boolean;
   isScreenSharing: boolean;
   isVideoBusy: boolean;
@@ -45,6 +48,8 @@ interface ConferenceController {
   localAudioLevel: number;
   noiseSuppressionEnabled: boolean;
   noiseSuppressionSupported: boolean;
+  participantConnections: ParticipantConnectionInfo[];
+  sendChatAttachment: (file: File) => Promise<void>;
   sendChatMessage: (text: string) => void;
   setAudioInputDevice: (deviceId: string) => Promise<void>;
   setNoiseSuppressionEnabled: (enabled: boolean) => Promise<void>;
@@ -68,7 +73,109 @@ const demoNames = [
   "Сергей",
 ];
 
+const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
+const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
+const ATTACHMENT_CHUNK_SIZE = 12_000;
+export const MAX_CHAT_ATTACHMENT_SIZE = 2 * 1024 * 1024;
+
+type AttachmentWireMessage =
+  | {
+      id: string;
+      kind: "start";
+      mimeType: string;
+      name: string;
+      size: number;
+      totalChunks: number;
+    }
+  | {
+      data: string;
+      id: string;
+      index: number;
+      kind: "chunk";
+    }
+  | {
+      id: string;
+      kind: "end";
+    };
+
+interface IncomingAttachment {
+  avatarUrl: string;
+  chunks: string[];
+  id: string;
+  mimeType: string;
+  name: string;
+  senderId: string;
+  senderName: string;
+  size: number;
+  timestamp: number;
+  totalChunks: number;
+}
+
+type PingWireMessage =
+  | {
+      id: string;
+      kind: "request";
+      to: string;
+    }
+  | {
+      id: string;
+      kind: "response";
+      to: string;
+    };
+
 type LocalMediaDevice = "audio" | "video" | "desktop";
+
+function parseAttachmentWireMessage(text: string) {
+  if (!text.startsWith(ATTACHMENT_MESSAGE_PREFIX)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      text.slice(ATTACHMENT_MESSAGE_PREFIX.length),
+    ) as AttachmentWireMessage;
+  } catch {
+    return null;
+  }
+}
+
+function attachmentMessage(message: AttachmentWireMessage) {
+  return `${ATTACHMENT_MESSAGE_PREFIX}${JSON.stringify(message)}`;
+}
+
+function parsePingWireMessage(text: string) {
+  if (!text.startsWith(PING_MESSAGE_PREFIX)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text.slice(PING_MESSAGE_PREFIX.length)) as PingWireMessage;
+  } catch {
+    return null;
+  }
+}
+
+function pingMessage(message: PingWireMessage) {
+  return `${PING_MESSAGE_PREFIX}${JSON.stringify(message)}`;
+}
+
+async function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Не удалось прочитать вложение"));
+      }
+    });
+    reader.addEventListener("error", () =>
+      reject(reader.error ?? new Error("Не удалось прочитать вложение")),
+    );
+    reader.readAsDataURL(file);
+  });
+}
 
 function mediaName(device: LocalMediaDevice) {
   if (device === "audio") {
@@ -129,7 +236,9 @@ async function createLocalTrack(
 ) {
   const tracks = await library.createLocalTracks({
     devices: [device],
-    ...(device === "audio" && deviceId ? { micDeviceId: deviceId } : {}),
+    ...(device === "audio"
+      ? { micDeviceId: deviceId || "default" }
+      : {}),
     ...(device === "video" && deviceId ? { cameraDeviceId: deviceId } : {}),
     ...(device === "video" ? { resolution: 720 } : {}),
   });
@@ -204,6 +313,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const [noiseSuppressionSupported, setNoiseSuppressionSupported] =
     useState(false);
   const [isDeviceSwitchBusy, setIsDeviceSwitchBusy] = useState(false);
+  const [isSendingAttachment, setIsSendingAttachment] = useState(false);
+  const [connectionStats, setConnectionStats] = useState<
+    Record<string, { pingMs: number | null; quality: number | null }>
+  >({});
   const connectionRef = useRef<JitsiConnectionLike | null>(null);
   const conferenceRef = useRef<JitsiConferenceLike | null>(null);
   const libraryRef = useRef<JitsiMeetJSLibrary | null>(null);
@@ -220,6 +333,13 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const audioInputIdRef = useRef("");
   const videoInputIdRef = useRef("");
   const noiseSuppressionEnabledRef = useRef(false);
+  const incomingAttachmentsRef = useRef(
+    new Map<string, IncomingAttachment>(),
+  );
+  const pendingPingsRef = useRef(
+    new Map<string, { participantId: string; startedAt: number }>(),
+  );
+  const pingIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -375,6 +495,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
     conferenceRef.current = null;
     connectionRef.current = null;
+    if (pingIntervalRef.current !== null) {
+      window.clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+    pendingPingsRef.current.clear();
     setMediaBusy("audio", false);
     setMediaBusy("video", false);
     setMediaBusy("desktop", false);
@@ -401,6 +526,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
       localAvatarRef.current = options.avatarDataUrl;
       disposedRef.current = false;
       setChatMessages([]);
+      setConnectionStats({});
+      incomingAttachmentsRef.current.clear();
 
       if (isDemo) {
         setStatus("loading");
@@ -550,6 +677,41 @@ export function useJitsiConference(roomName: string): ConferenceController {
               options.avatarDataUrl,
             );
 
+            const sendPingRound = () => {
+              if (
+                conferenceRef.current !== conference ||
+                !conference.sendTextMessage
+              ) {
+                return;
+              }
+
+              const now = window.performance.now();
+
+              for (const [pingId, pending] of pendingPingsRef.current) {
+                if (now - pending.startedAt > 20_000) {
+                  pendingPingsRef.current.delete(pingId);
+                }
+              }
+
+              for (const participant of conference.getParticipants()) {
+                const pingId = `${localIdRef.current}-${Date.now()}-${Math.random()
+                  .toString(36)
+                  .slice(2)}`;
+
+                pendingPingsRef.current.set(pingId, {
+                  participantId: participant.getId(),
+                  startedAt: window.performance.now(),
+                });
+                conference.sendTextMessage(
+                  pingMessage({
+                    id: pingId,
+                    kind: "request",
+                    to: participant.getId(),
+                  }),
+                );
+              }
+            };
+
             const resyncEvents = [
               conferenceEvents.TRACK_ADDED,
               conferenceEvents.TRACK_REMOVED,
@@ -588,6 +750,51 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     return;
                   }
 
+                  const pingWireMessage = parsePingWireMessage(rawText);
+
+                  if (pingWireMessage) {
+                    if (pingWireMessage.to !== localIdRef.current) {
+                      return;
+                    }
+
+                    if (pingWireMessage.kind === "request") {
+                      conference.sendTextMessage?.(
+                        pingMessage({
+                          id: pingWireMessage.id,
+                          kind: "response",
+                          to: rawSenderId,
+                        }),
+                      );
+                    } else {
+                      const pending = pendingPingsRef.current.get(
+                        pingWireMessage.id,
+                      );
+
+                      pendingPingsRef.current.delete(pingWireMessage.id);
+                      if (
+                        pending?.participantId === rawSenderId &&
+                        Number.isFinite(pending.startedAt)
+                      ) {
+                        const pingMs = Math.max(
+                          0,
+                          Math.round(
+                            window.performance.now() - pending.startedAt,
+                          ),
+                        );
+
+                        setConnectionStats((current) => ({
+                          ...current,
+                          [rawSenderId]: {
+                            pingMs,
+                            quality: current[rawSenderId]?.quality ?? null,
+                          },
+                        }));
+                      }
+                    }
+
+                    return;
+                  }
+
                   const sender = conference
                     .getParticipants()
                     .find(
@@ -611,6 +818,89 @@ export function useJitsiConference(roomName: string): ConferenceController {
                       : Number.isFinite(parsedTimestamp)
                         ? parsedTimestamp
                         : Date.now();
+                  const wireMessage = parseAttachmentWireMessage(rawText);
+
+                  if (wireMessage) {
+                    const transferKey = `${rawSenderId}:${wireMessage.id}`;
+
+                    if (wireMessage.kind === "start") {
+                      if (
+                        wireMessage.size < 0 ||
+                        wireMessage.size > MAX_CHAT_ATTACHMENT_SIZE ||
+                        wireMessage.totalChunks < 1 ||
+                        wireMessage.totalChunks > 300
+                      ) {
+                        return;
+                      }
+
+                      incomingAttachmentsRef.current.set(transferKey, {
+                        avatarUrl:
+                          typeof sender?.getProperty?.("avatarURL") === "string"
+                            ? String(sender.getProperty?.("avatarURL"))
+                            : "",
+                        chunks: new Array(wireMessage.totalChunks),
+                        id: wireMessage.id,
+                        mimeType:
+                          wireMessage.mimeType || "application/octet-stream",
+                        name: wireMessage.name.slice(0, 180) || "Вложение",
+                        senderId: rawSenderId,
+                        senderName: sender?.getDisplayName() || "Без имени",
+                        size: wireMessage.size,
+                        timestamp,
+                        totalChunks: wireMessage.totalChunks,
+                      });
+                    } else if (wireMessage.kind === "chunk") {
+                      const transfer =
+                        incomingAttachmentsRef.current.get(transferKey);
+
+                      if (
+                        transfer &&
+                        wireMessage.index >= 0 &&
+                        wireMessage.index < transfer.totalChunks &&
+                        wireMessage.data.length <=
+                          ATTACHMENT_CHUNK_SIZE + 8
+                      ) {
+                        transfer.chunks[wireMessage.index] = wireMessage.data;
+                      }
+                    } else {
+                      const transfer =
+                        incomingAttachmentsRef.current.get(transferKey);
+
+                      incomingAttachmentsRef.current.delete(transferKey);
+                      if (
+                        !transfer ||
+                        transfer.chunks.some(
+                          (chunk) => typeof chunk !== "string",
+                        )
+                      ) {
+                        return;
+                      }
+
+                      const attachment: ChatAttachment = {
+                        dataUrl: `data:${transfer.mimeType};base64,${transfer.chunks.join("")}`,
+                        id: transfer.id,
+                        mimeType: transfer.mimeType,
+                        name: transfer.name,
+                        size: transfer.size,
+                      };
+
+                      setChatMessages((messages) => [
+                        ...messages,
+                        {
+                          attachments: [attachment],
+                          avatarUrl: transfer.avatarUrl,
+                          id: `${rawSenderId}-${transfer.id}`,
+                          isLocal: false,
+                          senderId: rawSenderId,
+                          senderName: transfer.senderName,
+                          text: "",
+                          timestamp: transfer.timestamp,
+                        },
+                      ]);
+                    }
+
+                    return;
+                  }
 
                   setChatMessages((messages) => [
                     ...messages,
@@ -629,6 +919,54 @@ export function useJitsiConference(roomName: string): ConferenceController {
                   ]);
                 },
               );
+            }
+            const localStatsEvent =
+              library.events.connectionQuality?.LOCAL_STATS_UPDATED;
+            const remoteStatsEvent =
+              library.events.connectionQuality?.REMOTE_STATS_UPDATED;
+
+            if (localStatsEvent) {
+              conference.on(localStatsEvent, (rawStats) => {
+                const quality =
+                  rawStats &&
+                  typeof rawStats === "object" &&
+                  "connectionQuality" in rawStats &&
+                  typeof rawStats.connectionQuality === "number"
+                    ? rawStats.connectionQuality
+                    : null;
+
+                setConnectionStats((current) => ({
+                  ...current,
+                  [localIdRef.current]: {
+                    pingMs: null,
+                    quality,
+                  },
+                }));
+              });
+            }
+
+            if (remoteStatsEvent) {
+              conference.on(remoteStatsEvent, (rawId, rawStats) => {
+                if (typeof rawId !== "string") {
+                  return;
+                }
+
+                const quality =
+                  rawStats &&
+                  typeof rawStats === "object" &&
+                  "connectionQuality" in rawStats &&
+                  typeof rawStats.connectionQuality === "number"
+                    ? rawStats.connectionQuality
+                    : null;
+
+                setConnectionStats((current) => ({
+                  ...current,
+                  [rawId]: {
+                    pingMs: current[rawId]?.pingMs ?? null,
+                    quality,
+                  },
+                }));
+              });
             }
             if (conferenceEvents.TRACK_UNMUTE_REJECTED) {
               conference.on(
@@ -651,6 +989,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
             conference.on(conferenceEvents.CONFERENCE_JOINED, async () => {
               setStatus("joined");
               syncParticipants();
+              window.setTimeout(sendPingRound, 1_000);
+              if (pingIntervalRef.current !== null) {
+                window.clearInterval(pingIntervalRef.current);
+              }
+              pingIntervalRef.current = window.setInterval(
+                sendPingRound,
+                5_000,
+              );
 
               if (options.password && conference.isModerator()) {
                 await conference.lock(options.password).catch(() => {
@@ -1202,12 +1548,120 @@ export function useJitsiConference(roomName: string): ConferenceController {
     ]);
   }, [isDemo]);
 
+  const sendChatAttachment = useCallback(
+    async (file: File) => {
+      if (file.size > MAX_CHAT_ATTACHMENT_SIZE) {
+        setError("Вложение должно быть не больше 2 МБ.");
+        return;
+      }
+
+      const conference = conferenceRef.current;
+
+      if (!isDemo && !conference?.sendTextMessage) {
+        setError("Вложения недоступны в этой сборке Jitsi.");
+        return;
+      }
+
+      setError(null);
+      setIsSendingAttachment(true);
+
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+        const attachmentId =
+          globalThis.crypto?.randomUUID?.() ??
+          `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const attachment: ChatAttachment = {
+          dataUrl,
+          id: attachmentId,
+          mimeType: file.type || "application/octet-stream",
+          name: file.name || "Вложение",
+          size: file.size,
+        };
+
+        setChatMessages((messages) => [
+          ...messages,
+          {
+            attachments: [attachment],
+            avatarUrl: localAvatarRef.current,
+            id: `local-${attachmentId}`,
+            isLocal: true,
+            senderId: localIdRef.current,
+            senderName: localNameRef.current,
+            text: "",
+            timestamp: Date.now(),
+          },
+        ]);
+
+        if (isDemo) {
+          return;
+        }
+
+        const chunks = Array.from(
+          {
+            length: Math.max(
+              1,
+              Math.ceil(base64.length / ATTACHMENT_CHUNK_SIZE),
+            ),
+          },
+          (_, index) =>
+            base64.slice(
+              index * ATTACHMENT_CHUNK_SIZE,
+              (index + 1) * ATTACHMENT_CHUNK_SIZE,
+            ),
+        );
+
+        conference?.sendTextMessage?.(
+          attachmentMessage({
+            id: attachmentId,
+            kind: "start",
+            mimeType: attachment.mimeType,
+            name: attachment.name,
+            size: attachment.size,
+            totalChunks: chunks.length,
+          }),
+        );
+
+        for (let index = 0; index < chunks.length; index += 1) {
+          conference?.sendTextMessage?.(
+            attachmentMessage({
+              data: chunks[index],
+              id: attachmentId,
+              index,
+              kind: "chunk",
+            }),
+          );
+
+          if (index > 0 && index % 20 === 0) {
+            await new Promise<void>((resolve) =>
+              window.setTimeout(resolve, 0),
+            );
+          }
+        }
+
+        conference?.sendTextMessage?.(
+          attachmentMessage({
+            id: attachmentId,
+            kind: "end",
+          }),
+        );
+      } catch {
+        setError("Не удалось отправить вложение.");
+      } finally {
+        setIsSendingAttachment(false);
+      }
+    },
+    [isDemo],
+  );
+
   const leave = useCallback(async () => {
     if (!isDemo) {
       await teardown();
     }
     setParticipants([]);
     setChatMessages([]);
+    setConnectionStats({});
+    incomingAttachmentsRef.current.clear();
     setLocalAudioLevel(0);
     setStatus("left");
   }, [isDemo, teardown]);
@@ -1221,6 +1675,22 @@ export function useJitsiConference(roomName: string): ConferenceController {
     [isDemo, teardown],
   );
 
+  const participantConnections = participants.map<ParticipantConnectionInfo>(
+    (participant, index) => {
+      const stats = connectionStats[participant.id];
+
+      return {
+        displayName: participant.displayName,
+        id: participant.id,
+        isLocal: participant.isLocal,
+        pingMs:
+          stats?.pingMs ??
+          (isDemo && !participant.isLocal ? 18 + index * 7 : null),
+        quality: stats?.quality ?? (isDemo ? 92 - index * 5 : null),
+      };
+    },
+  );
+
   return {
     audioInputId,
     chatMessages,
@@ -1229,6 +1699,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     isAudioMuted,
     isDemo,
     isDeviceSwitchBusy,
+    isSendingAttachment,
     isScreenShareBusy,
     isScreenSharing,
     isVideoBusy,
@@ -1236,6 +1707,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
     localAudioLevel,
     noiseSuppressionEnabled,
     noiseSuppressionSupported,
+    participantConnections,
+    sendChatAttachment,
     sendChatMessage,
     setAudioInputDevice,
     setNoiseSuppressionEnabled,

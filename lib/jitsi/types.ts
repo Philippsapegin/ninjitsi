@@ -51,6 +51,7 @@ export interface JitsiConferenceLike {
     oldTrack: JitsiTrackLike,
     newTrack: JitsiTrackLike,
   ) => Promise<void>;
+  sendEndpointMessage?: (participantId: string, payload: object) => void;
   sendTextMessage?: (message: string) => void;
   setDisplayName: (displayName: string) => void;
   setLocalParticipantProperty?: (name: string, value: string) => void;
@@ -72,6 +73,8 @@ export interface JitsiConnectionLike {
 interface JitsiEventCollection {
   conference: Record<string, string>;
   connection: Record<string, string>;
+  connectionQuality: Record<string, string>;
+  e2eping: Record<string, string>;
   track: Record<string, string>;
 }
 
@@ -108,6 +111,7 @@ export interface ParticipantView {
 }
 
 export interface ChatMessage {
+  attachments?: ChatAttachment[];
   avatarUrl?: string;
   id: string;
   isLocal: boolean;
@@ -115,6 +119,22 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
+}
+
+export interface ChatAttachment {
+  dataUrl: string;
+  id: string;
+  mimeType: string;
+  name: string;
+  size: number;
+}
+
+export interface ParticipantConnectionInfo {
+  displayName: string;
+  id: string;
+  isLocal: boolean;
+  pingMs: number | null;
+  quality: number | null;
 }
 
 export type MeetingStatus =

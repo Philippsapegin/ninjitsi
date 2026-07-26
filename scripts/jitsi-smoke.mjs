@@ -78,6 +78,16 @@ page.on("pageerror", (pageError) => {
 });
 
 try {
+  await page.addInitScript(() => {
+    const originalGetUserMedia =
+      navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+
+    window.__ninjitsiCapturedConstraints = [];
+    navigator.mediaDevices.getUserMedia = (constraints) => {
+      window.__ninjitsiCapturedConstraints.push(constraints);
+      return originalGetUserMedia(constraints);
+    };
+  });
   await page.addInitScript((serverUrl) => {
     window.__NINJITSI_CONFIG__ = { jitsiUrl: serverUrl };
   }, jitsiUrl);
@@ -97,7 +107,7 @@ try {
     return canvas.toDataURL("image/png");
   });
 
-  await page.locator('input[type="file"]').setInputFiles({
+  await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
     buffer: Buffer.from(avatarDataUrl.split(",")[1], "base64"),
     mimeType: "image/png",
     name: "avatar.png",
@@ -119,6 +129,18 @@ try {
   await page
     .getByRole("button", { name: "Выключить камеру" })
     .waitFor({ timeout: 30_000 });
+  const usedSystemMicrophone = await page.evaluate(() =>
+    window.__ninjitsiCapturedConstraints.some(
+      (constraints) =>
+        constraints.audio &&
+        typeof constraints.audio === "object" &&
+        constraints.audio.deviceId?.exact === "default",
+    ),
+  );
+
+  if (!usedSystemMicrophone) {
+    throw new Error("Системный микрофон не передан как deviceId=default");
+  }
   await page.waitForFunction(
     () => {
       const microphoneButton = document.querySelector(
@@ -198,6 +220,77 @@ try {
   await page
     .getByText(chatReply, { exact: true })
     .waitFor({ timeout: 30_000 });
+
+  const attachmentName = `drop-${Date.now()}.txt`;
+  const dataTransfer = await page.evaluateHandle((name) => {
+    const transfer = new DataTransfer();
+
+    transfer.items.add(
+      new File(["temporary attachment"], name, {
+        type: "text/plain",
+      }),
+    );
+    return transfer;
+  }, attachmentName);
+  const chatSidebar = page.getByRole("complementary");
+
+  await chatSidebar.dispatchEvent("dragenter", {
+    dataTransfer,
+  });
+  await page.getByText("Отпустите файлы", { exact: true }).waitFor();
+  await chatSidebar.dispatchEvent("drop", {
+    dataTransfer,
+  });
+  await observerPage
+    .getByText(attachmentName, { exact: true })
+    .waitFor({ timeout: 30_000 });
+
+  const remoteAttachmentHref = await observerPage
+    .getByTitle(`Скачать ${attachmentName}`)
+    .getAttribute("href");
+
+  if (!remoteAttachmentHref?.startsWith("data:text/plain;base64,")) {
+    throw new Error("Вложение не дошло как временный data URL");
+  }
+
+  await page.getByRole("button", { name: "Свернуть чат" }).click();
+  await page.getByRole("button", { name: "Развернуть чат" }).waitFor();
+  await page.getByRole("button", { name: "Развернуть чат" }).click();
+  await page.getByRole("button", { name: "Добавить вложение" }).waitFor();
+
+  await page
+    .getByRole("button", { name: "Показать на сцене Remote Observer" })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Вернуть сетку из сцены Remote Observer",
+    })
+    .waitFor();
+  await page
+    .getByRole("button", {
+      name: "Вернуть сетку из сцены Remote Observer",
+    })
+    .click();
+
+  await page.locator("[data-connection-summary]").hover();
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll("[data-participant-ping]")).some(
+        (element) => /^\d+ мс$/.test(element.textContent?.trim() ?? ""),
+      ),
+    undefined,
+    { timeout: 30_000 },
+  );
+  await page.waitForFunction(
+    () =>
+      Array.from(
+        document.querySelectorAll('[aria-label^="Соединение "]'),
+      ).some((element) =>
+        /^Соединение \d+%$/.test(element.getAttribute("aria-label") ?? ""),
+      ),
+    undefined,
+    { timeout: 30_000 },
+  );
 
   await page.getByRole("button", { name: "Настройки" }).click();
   const settingsDialog = page.getByRole("dialog", {
@@ -376,14 +469,18 @@ try {
         media: {
           camera: "toggle passed",
           avatarPropagation: "passed",
+          attachments: "ephemeral drag-and-drop passed",
           chat: "bidirectional transport passed",
+          connectionStats: "conference RTT passed",
           deviceSettings: "enumeration passed",
           microphone: "toggle passed",
+          microphoneDefault: "explicit default device passed",
           microphoneLevel: "reactive outline passed",
           noiseSuppression: "toggle passed",
           remotePropagation: "passed",
           recoveryAfterInitialDenial: "passed",
           screenShare: "start/stop passed",
+          stageMode: "enter/exit passed",
         },
         roomName,
         status: "joined",

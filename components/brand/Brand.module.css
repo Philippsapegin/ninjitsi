@@ -12,10 +12,13 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  color: var(--accent-ink);
-  background: var(--accent);
   border-radius: 11px;
   box-shadow: 0 0 0 5px rgba(216, 255, 99, 0.08);
+}
+
+.mark img {
+  display: block;
+  border-radius: 10px;
 }
 
 .wordmark {

@@ -1,0 +1,148 @@
+.root {
+  position: relative;
+  display: inline-flex;
+  height: 34px;
+  padding: 0 12px;
+  align-items: center;
+  justify-self: center;
+  gap: 8px;
+  outline: none;
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.045);
+  border: 0;
+  border-radius: 10px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.root > strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.liveDot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(216, 255, 99, 0.08);
+}
+
+.divider {
+  width: 1px;
+  height: 15px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.popover {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 10px);
+  left: 50%;
+  width: 310px;
+  padding: 14px;
+  pointer-events: none;
+  background: rgba(20, 24, 29, 0.98);
+  border: 0;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translate(-50%, -4px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.root:hover .popover,
+.root:focus .popover,
+.root:focus-within .popover {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.popover > header {
+  display: flex;
+  margin-bottom: 11px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.popover > header strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.popover > header span {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row {
+  display: grid;
+  min-height: 30px;
+  padding: 0 7px;
+  grid-template-columns: minmax(0, 1fr) 38px 65px;
+  gap: 8px;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 7px;
+}
+
+.row > span:first-child {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row > strong {
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 690;
+  text-align: right;
+}
+
+.strength {
+  display: flex;
+  height: 16px;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+}
+
+.strength i {
+  width: 3px;
+  background: #525a62;
+  border-radius: 1px;
+}
+
+.strength i:nth-child(1) {
+  height: 4px;
+}
+
+.strength i:nth-child(2) {
+  height: 7px;
+}
+
+.strength i:nth-child(3) {
+  height: 10px;
+}
+
+.strength i:nth-child(4) {
+  height: 13px;
+}
+
+.strength i.filled {
+  background: var(--accent);
+}

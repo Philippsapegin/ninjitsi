@@ -1,4 +1,3 @@
-import { Sparkles } from "lucide-react";
 import styles from "./Brand.module.css";
 
 interface BrandProps {
@@ -9,7 +8,13 @@ export function Brand({ compact = false }: BrandProps) {
   return (
     <div className={styles.brand} aria-label="Ninjitsi">
       <span className={styles.mark}>
-        <Sparkles size={compact ? 16 : 18} strokeWidth={2.2} />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          alt=""
+          height={compact ? 30 : 34}
+          src="/icon.svg"
+          width={compact ? 30 : 34}
+        />
       </span>
       {!compact && <span className={styles.wordmark}>ninjitsi</span>}
     </div>

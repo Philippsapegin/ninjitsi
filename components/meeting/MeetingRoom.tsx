@@ -6,11 +6,9 @@ import {
   Check,
   Copy,
   LoaderCircle,
-  LockKeyhole,
   Maximize2,
   Radio,
   RefreshCw,
-  Users,
   WifiOff,
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
@@ -23,6 +21,7 @@ import { useRoomApiEnabled } from "@/lib/runtimeConfig";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
 import { ChatSidebar } from "./ChatSidebar";
+import { ConnectionSummary } from "./ConnectionSummary";
 import { JoinOverlay } from "./JoinOverlay";
 import { SettingsPanel } from "./SettingsPanel";
 import { VideoGrid } from "./VideoGrid";
@@ -57,6 +56,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const [admissionError, setAdmissionError] = useState("");
   const [isAdmissionBusy, setIsAdmissionBusy] = useState(false);
   const [roomCheckAttempt, setRoomCheckAttempt] = useState(0);
+  const [focusedParticipantId, setFocusedParticipantId] = useState<
+    string | null
+  >(null);
   const [roomGate, setRoomGate] = useState<RoomGate>({
     status: "checking",
     error: null,
@@ -67,6 +69,14 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     conference.status === "loading" ||
     conference.status === "connecting" ||
     conference.status === "failed";
+
+  const activeFocusedParticipantId =
+    focusedParticipantId &&
+    conference.participants.some(
+      (participant) => participant.id === focusedParticipantId,
+    )
+      ? focusedParticipantId
+      : null;
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -253,26 +263,28 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           </div>
         </div>
 
-        <div className={styles.callMeta}>
-          <span className={styles.liveDot} />
-          <strong>{timer}</strong>
-          <span className={styles.metaDivider} />
-          <Users size={14} />
-          <span>{participantLabel}</span>
-          {protectedRoom && (
-            <>
-              <span className={styles.metaDivider} />
-              <LockKeyhole size={13} />
-              <span>с паролем</span>
-            </>
-          )}
-        </div>
+        <ConnectionSummary
+          participantLabel={participantLabel}
+          participants={conference.participantConnections}
+          protectedRoom={protectedRoom}
+          timer={timer}
+        />
 
         <div className={styles.headerActions}>
           <button onClick={() => void copyLink()} type="button">
             {copied ? <Check size={15} /> : <Copy size={15} />}
             {copied ? "Скопировано" : "Скопировать ссылку"}
           </button>
+          <SettingsPanel
+            audioInputId={conference.audioInputId}
+            busy={conference.isDeviceSwitchBusy}
+            noiseSuppressionEnabled={conference.noiseSuppressionEnabled}
+            noiseSuppressionSupported={conference.noiseSuppressionSupported}
+            onAudioInputChange={conference.setAudioInputDevice}
+            onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
+            onVideoInputChange={conference.setVideoInputDevice}
+            videoInputId={conference.videoInputId}
+          />
           <button
             aria-label="Полноэкранный режим"
             className={styles.iconButton}
@@ -286,15 +298,13 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       </header>
 
       <div className={styles.workspace}>
-        <ChatSidebar
-          disabled={conference.status !== "joined"}
-          messages={conference.chatMessages}
-          onSend={conference.sendChatMessage}
-        />
-
         <section className={styles.stage}>
           {conference.participants.length > 0 ? (
-            <VideoGrid participants={conference.participants} />
+            <VideoGrid
+              focusedParticipantId={activeFocusedParticipantId}
+              onParticipantClick={setFocusedParticipantId}
+              participants={conference.participants}
+            />
           ) : (
             <div className={styles.emptyStage}>
               <Radio size={26} />
@@ -302,6 +312,14 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             </div>
           )}
         </section>
+
+        <ChatSidebar
+          disabled={conference.status !== "joined"}
+          isSendingAttachment={conference.isSendingAttachment}
+          messages={conference.chatMessages}
+          onSend={conference.sendChatMessage}
+          onSendAttachment={conference.sendChatAttachment}
+        />
       </div>
 
       <CallControls
@@ -316,17 +334,6 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         onToggleAudio={() => void conference.toggleAudio()}
         onToggleScreenShare={() => void conference.toggleScreenShare()}
         onToggleVideo={() => void conference.toggleVideo()}
-      />
-
-      <SettingsPanel
-        audioInputId={conference.audioInputId}
-        busy={conference.isDeviceSwitchBusy}
-        noiseSuppressionEnabled={conference.noiseSuppressionEnabled}
-        noiseSuppressionSupported={conference.noiseSuppressionSupported}
-        onAudioInputChange={conference.setAudioInputDevice}
-        onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
-        onVideoInputChange={conference.setVideoInputDevice}
-        videoInputId={conference.videoInputId}
       />
 
       <AudioSinks participants={conference.participants} />

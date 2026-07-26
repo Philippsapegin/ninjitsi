@@ -20,11 +20,76 @@
     height 180ms ease;
 }
 
+.cell,
+.sceneMain,
+.sceneCell {
+  display: grid;
+  min-width: 0;
+  padding: 0;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
 .cell {
   flex: 0 0 auto;
   aspect-ratio: 16 / 9;
 }
 
 .cell > article {
+  height: 100%;
+}
+
+.cell:hover > article,
+.sceneCell:hover > article {
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.36);
+  transform: translateY(-1px);
+}
+
+.sceneViewport {
+  padding-top: 12px;
+}
+
+.scene {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) minmax(92px, 18%);
+  gap: 10px;
+}
+
+.sceneMain {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.sceneMain > article {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.sceneStrip {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.sceneCell {
+  overflow: hidden;
+  width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.sceneCell > article {
   height: 100%;
 }
