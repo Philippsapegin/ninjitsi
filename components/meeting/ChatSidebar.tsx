@@ -9,23 +9,35 @@ import {
   useState,
 } from "react";
 import {
+  Check,
+  ChevronDown,
   ChevronRight,
   FileText,
   ImageIcon,
   LoaderCircle,
+  LockKeyhole,
   MessageCircle,
   Paperclip,
   Send,
+  Users,
 } from "lucide-react";
-import type { ChatAttachment, ChatMessage } from "@/lib/jitsi/types";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ParticipantView,
+} from "@/lib/jitsi/types";
 import styles from "./ChatSidebar.module.css";
 
 interface ChatSidebarProps {
   disabled: boolean;
   isSendingAttachment: boolean;
   messages: ChatMessage[];
-  onSend: (text: string) => void;
-  onSendAttachment: (file: File) => Promise<void>;
+  onSend: (text: string, recipientIds?: string[]) => void;
+  onSendAttachment: (
+    file: File,
+    recipientIds?: string[],
+  ) => Promise<void>;
+  participants: ParticipantView[];
 }
 
 function initials(name: string) {
@@ -91,12 +103,26 @@ export function ChatSidebar({
   messages,
   onSend,
   onSendAttachment,
+  participants,
 }: ChatSidebarProps) {
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(true);
   const [dragActive, setDragActive] = useState(false);
+  const [recipientMenuOpen, setRecipientMenuOpen] = useState(false);
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>(
+    [],
+  );
   const listRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const recipientPickerRef = useRef<HTMLDivElement>(null);
+  const remoteParticipants = participants.filter(
+    (participant) => !participant.isLocal,
+  );
+  const selectedRecipients = remoteParticipants.filter((participant) =>
+    selectedRecipientIds.includes(participant.id),
+  );
+  const recipientUnavailable =
+    selectedRecipientIds.length > 0 && selectedRecipients.length === 0;
 
   useEffect(() => {
     listRef.current?.scrollTo({
@@ -105,26 +131,59 @@ export function ChatSidebar({
     });
   }, [messages]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!draft.trim() || disabled) {
+  useEffect(() => {
+    if (!recipientMenuOpen) {
       return;
     }
 
-    onSend(draft);
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !recipientPickerRef.current?.contains(event.target)
+      ) {
+        setRecipientMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () =>
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [recipientMenuOpen]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!draft.trim() || disabled || recipientUnavailable) {
+      return;
+    }
+
+    onSend(
+      draft,
+      selectedRecipients.map((participant) => participant.id),
+    );
     setDraft("");
   }
 
   async function sendFiles(files: File[]) {
-    if (disabled || files.length === 0) {
+    if (disabled || recipientUnavailable || files.length === 0) {
       return;
     }
 
     setOpen(true);
     for (const file of files.slice(0, 5)) {
-      await onSendAttachment(file);
+      await onSendAttachment(
+        file,
+        selectedRecipients.map((participant) => participant.id),
+      );
     }
+  }
+
+  function toggleRecipient(participantId: string) {
+    setSelectedRecipientIds((current) =>
+      current.includes(participantId)
+        ? current.filter((id) => id !== participantId)
+        : [...current, participantId],
+    );
   }
 
   function chooseFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -166,8 +225,6 @@ export function ChatSidebar({
         type="button"
       >
         <MessageCircle size={17} />
-        <span>Чат</span>
-        {messages.length > 0 && <i>{messages.length}</i>}
       </button>
 
       <div aria-hidden={!open} className={styles.panel}>
@@ -175,7 +232,6 @@ export function ChatSidebar({
           <div>
             <MessageCircle size={16} />
             <strong>Чат</strong>
-            {messages.length > 0 && <span>{messages.length}</span>}
           </div>
           <button
             aria-label="Свернуть чат"
@@ -211,9 +267,7 @@ export function ChatSidebar({
                 </div>
                 <div>
                   <header>
-                    <strong>
-                      {message.isLocal ? "Вы" : message.senderName}
-                    </strong>
+                    <strong>{message.senderName}</strong>
                     <time>
                       {new Date(message.timestamp).toLocaleTimeString("ru-RU", {
                         hour: "2-digit",
@@ -221,6 +275,16 @@ export function ChatSidebar({
                       })}
                     </time>
                   </header>
+                  {message.isPrivate && (
+                    <span className={styles.privateMessage}>
+                      <LockKeyhole size={9} />
+                      {message.isLocal &&
+                      message.recipientNames &&
+                      message.recipientNames.length > 0
+                        ? `Лично: ${message.recipientNames.join(", ")}`
+                        : "Личное сообщение"}
+                    </span>
+                  )}
                   {message.text && <p>{message.text}</p>}
                   {message.attachments?.map((attachment) => (
                     <Attachment
@@ -234,44 +298,124 @@ export function ChatSidebar({
           )}
         </div>
 
-        <form onSubmit={submit}>
-          <button
-            aria-label="Добавить вложение"
-            className={styles.attachButton}
-            disabled={disabled || isSendingAttachment}
-            onClick={() => fileInputRef.current?.click()}
-            title="До 2 МБ на файл"
-            type="button"
-          >
-            {isSendingAttachment ? (
-              <LoaderCircle className={styles.spinner} size={16} />
-            ) : (
-              <Paperclip size={16} />
-            )}
-          </button>
-          <textarea
-            aria-label="Сообщение в чат"
-            disabled={disabled}
-            maxLength={4000}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
+        <form className={styles.compose} onSubmit={submit}>
+          <div className={styles.recipientPicker} ref={recipientPickerRef}>
+            <button
+              aria-expanded={recipientMenuOpen}
+              aria-label="Выбрать получателей сообщения"
+              className={
+                selectedRecipients.length > 0 ? styles.privateRecipient : ""
               }
-            }}
-            placeholder={disabled ? "Войдите, чтобы писать" : "Сообщение…"}
-            rows={1}
-            value={draft}
-          />
-          <button
-            aria-label="Отправить сообщение"
-            className={styles.sendButton}
-            disabled={disabled || !draft.trim()}
-            type="submit"
-          >
-            <Send size={16} />
-          </button>
+              disabled={disabled || remoteParticipants.length === 0}
+              onClick={() => setRecipientMenuOpen((current) => !current)}
+              type="button"
+            >
+              {selectedRecipients.length > 0 ? (
+                <LockKeyhole size={11} />
+              ) : (
+                <Users size={11} />
+              )}
+              <span>
+                {recipientUnavailable
+                  ? "Получатель вышел"
+                  : selectedRecipients.length === 0
+                  ? "Всем"
+                  : `Лично: ${
+                      selectedRecipients.length === 1
+                        ? selectedRecipients[0].displayName
+                        : `${selectedRecipients.length} участникам`
+                    }`}
+              </span>
+              <ChevronDown size={11} />
+            </button>
+
+            {recipientMenuOpen && (
+              <section
+                aria-label="Получатели сообщения"
+                className={styles.recipientMenu}
+              >
+                <header>
+                  <strong>Кому отправить</strong>
+                  <span>Можно выбрать несколько</span>
+                </header>
+                <button
+                  className={
+                    selectedRecipientIds.length === 0
+                      ? styles.recipientSelected
+                      : ""
+                  }
+                  onClick={() => setSelectedRecipientIds([])}
+                  type="button"
+                >
+                  <Users size={13} />
+                  <span>Всем участникам</span>
+                  {selectedRecipientIds.length === 0 && <Check size={12} />}
+                </button>
+                {remoteParticipants.map((participant) => {
+                  const selected = selectedRecipientIds.includes(
+                    participant.id,
+                  );
+
+                  return (
+                    <button
+                      className={selected ? styles.recipientSelected : ""}
+                      key={participant.id}
+                      onClick={() => toggleRecipient(participant.id)}
+                      type="button"
+                    >
+                      <span className={styles.recipientAvatar}>
+                        {initials(participant.displayName)}
+                      </span>
+                      <span>{participant.displayName}</span>
+                      {selected && <Check size={12} />}
+                    </button>
+                  );
+                })}
+              </section>
+            )}
+          </div>
+
+          <div className={styles.composer}>
+            <button
+              aria-label="Добавить вложение"
+              className={styles.attachButton}
+              disabled={
+                disabled || recipientUnavailable || isSendingAttachment
+              }
+              onClick={() => fileInputRef.current?.click()}
+              title="До 2 МБ на файл"
+              type="button"
+            >
+              {isSendingAttachment ? (
+                <LoaderCircle className={styles.spinner} size={16} />
+              ) : (
+                <Paperclip size={16} />
+              )}
+            </button>
+            <textarea
+              aria-label="Сообщение в чат"
+              disabled={disabled}
+              maxLength={4000}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder={disabled ? "Войдите, чтобы писать" : "Сообщение…"}
+              rows={1}
+              value={draft}
+            />
+            <button
+              aria-label="Отправить сообщение"
+              className={styles.sendButton}
+              disabled={disabled || recipientUnavailable || !draft.trim()}
+              type="submit"
+            >
+              <Send size={16} />
+            </button>
+          </div>
         </form>
 
         <input

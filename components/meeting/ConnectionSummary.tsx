@@ -70,7 +70,7 @@ export function ConnectionSummary({
           {participants.map((participant) => (
             <div className={styles.row} key={participant.id}>
               <span title={participant.displayName}>
-                {participant.isLocal ? "Вы" : participant.displayName}
+                {participant.displayName}
               </span>
               <ConnectionStrength quality={participant.quality} />
               <strong data-participant-ping={participant.id}>

@@ -222,6 +222,29 @@ try {
     timeout: 30_000,
   });
 
+  await page
+    .getByRole("button", {
+      name: "Громкость участника Remote Observer: 100%",
+    })
+    .click();
+  await page
+    .getByRole("slider", { name: "Громкость Remote Observer" })
+    .fill("200");
+  await page
+    .locator(
+      'audio[data-output-volume="2"][data-audio-gain="webaudio"]',
+    )
+    .waitFor({ state: "attached" });
+  if (
+    (await page
+      .getByRole("button", {
+        name: "Вернуть сетку из сцены Remote Observer",
+      })
+      .count()) !== 0
+  ) {
+    throw new Error("Регулятор громкости переключил плитку в сцену");
+  }
+
   const chatProbe = `Проверка чата ${Date.now()}`;
 
   await page.getByLabel("Сообщение в чат").fill(chatProbe);
@@ -246,6 +269,75 @@ try {
   await page
     .getByText(chatReply, { exact: true })
     .waitFor({ timeout: 30_000 });
+
+  const bystanderPage = await context.newPage();
+
+  bystanderPage.on("console", (message) => {
+    if (message.type() === "error") {
+      browserErrors.push(`[bystander] ${message.text()}`);
+    }
+  });
+  bystanderPage.on("pageerror", (pageError) => {
+    browserErrors.push(`[bystander] ${pageError.message}`);
+  });
+  await bystanderPage.addInitScript(
+    ({ forceJvbForTesting, serverUrl }) => {
+      window.__NINJITSI_CONFIG__ = {
+        forceJvbForTesting,
+        jitsiUrl: serverUrl,
+      };
+    },
+    { forceJvbForTesting: forceJvb, serverUrl: jitsiUrl },
+  );
+  await bystanderPage.goto(`${baseUrl}/room/${roomName}`, {
+    waitUntil: "networkidle",
+  });
+  await bystanderPage.getByLabel("Ваше имя").fill("Silent Bystander");
+  await bystanderPage
+    .getByRole("button", { name: "Войти в комнату" })
+    .click();
+  await bystanderPage
+    .getByRole("dialog", { name: "Вход в комнату" })
+    .waitFor({ state: "hidden", timeout: 90_000 });
+  await bystanderPage
+    .getByRole("button", {
+      name: "Показать на сцене Remote Observer",
+    })
+    .waitFor({ timeout: 30_000 });
+
+  const privateProbe = `Личное сообщение ${Date.now()}`;
+
+  await page.getByLabel("Выбрать получателей сообщения").click();
+  await page
+    .getByRole("region", { name: "Получатели сообщения" })
+    .getByRole("button")
+    .filter({ hasText: "Remote Observer" })
+    .click();
+  await page.getByLabel("Сообщение в чат").fill(privateProbe);
+  await page
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  await observerPage
+    .getByText(privateProbe, { exact: true })
+    .waitFor({ timeout: 30_000 });
+  await page
+    .locator("article")
+    .filter({ hasText: privateProbe })
+    .getByText("Лично: Remote Observer", { exact: true })
+    .waitFor();
+  await bystanderPage.waitForTimeout(1_500);
+  if (
+    (await bystanderPage.getByText(privateProbe, { exact: true }).count()) !==
+    0
+  ) {
+    throw new Error("Личное сообщение увидел невыбранный участник");
+  }
+  await page.getByLabel("Выбрать получателей сообщения").click();
+  await page
+    .getByRole("region", { name: "Получатели сообщения" })
+    .getByRole("button", { name: /Всем участникам/ })
+    .click();
+  await bystanderPage.close();
 
   const attachmentName = `drop-${Date.now()}.txt`;
   const dataTransfer = await page.evaluateHandle((name) => {
@@ -520,11 +612,13 @@ try {
           avatarPropagation: "passed",
           attachments: "ephemeral drag-and-drop passed",
           chat: "bidirectional transport passed",
+          privateChat: "selected recipients only passed",
           connectionStats: "conference RTT passed",
           deviceSettings: "enumeration passed",
           microphone: "toggle passed",
           microphoneDefault: "explicit default device passed",
           microphoneLevel: "reactive outline passed",
+          participantVolume: "0–200% local gain passed",
           noiseSuppression: "toggle passed",
           remotePropagation: "passed",
           recoveryAfterInitialDenial: "passed",

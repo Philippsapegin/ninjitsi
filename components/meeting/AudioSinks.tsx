@@ -2,10 +2,14 @@ import type { ParticipantView } from "@/lib/jitsi/types";
 import { AudioTrack } from "./MediaTrack";
 
 interface AudioSinksProps {
+  participantVolumes: Record<string, number>;
   participants: ParticipantView[];
 }
 
-export function AudioSinks({ participants }: AudioSinksProps) {
+export function AudioSinks({
+  participantVolumes,
+  participants,
+}: AudioSinksProps) {
   return (
     <div aria-hidden="true">
       {participants
@@ -14,6 +18,7 @@ export function AudioSinks({ participants }: AudioSinksProps) {
           <AudioTrack
             key={participant.id}
             track={participant.audioTrack!}
+            volume={participantVolumes[participant.id] ?? 1}
           />
         ))}
     </div>

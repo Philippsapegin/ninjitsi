@@ -155,7 +155,7 @@
 }
 
 .headerActions > button:hover {
-  color: var(--text);
+  color: var(--accent);
   background: var(--surface-soft);
 }
 

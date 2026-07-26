@@ -3,10 +3,16 @@
 import { FormEvent, useState } from "react";
 import {
   ArrowRight,
+  Camera,
   LoaderCircle,
   LockKeyhole,
   LogIn,
+  MessageCircle,
+  Mic,
+  MonitorUp,
+  PhoneOff,
   Plus,
+  Send,
   ShieldCheck,
   Video,
 } from "lucide-react";
@@ -24,7 +30,7 @@ const previewPeople = [
   { name: "Таня", tone: "sand" },
   { name: "Костя", tone: "mint" },
   { name: "Аня", tone: "coral" },
-  { name: "Вы", tone: "slate" },
+  { name: "Сергей", tone: "slate" },
 ];
 
 type LandingMode = "create" | "join";
@@ -101,16 +107,12 @@ export function LandingPage() {
         <div className={styles.copy}>
           <div className={styles.eyebrow}>
             <span className={styles.eyebrowDot} />
-            Свой клиент поверх Jitsi
+            Простой клиент поверх Jitsi
           </div>
           <h1>
-            Все собеседники
-            <span> перед глазами.</span>
+            <span>Проще</span>
+            <span>некуда</span>
           </h1>
-          <p className={styles.lead}>
-            Никаких боковых лент и спрятанных участников. Только ровная сетка
-            16:9, которая сама собирается под размер разговора.
-          </p>
 
           <form className={styles.form} onSubmit={(event) => void submit(event)}>
             <div aria-label="Действие с комнатой" className={styles.modeSwitch}>
@@ -208,7 +210,7 @@ export function LandingPage() {
 
         <div className={styles.previewColumn}>
           <div className={styles.previewGlow} />
-          <div className={styles.previewWindow}>
+          <div className={styles.previewWindow} data-landing-preview>
             <div className={styles.previewTopbar}>
               <span className={styles.previewRoom}>small-studio-24</span>
               <span className={styles.previewLive}>
@@ -216,30 +218,56 @@ export function LandingPage() {
                 6 в комнате
               </span>
             </div>
-            <div className={styles.previewGrid}>
-              {previewPeople.map((person) => (
-                <div
-                  className={`${styles.previewTile} ${styles[person.tone]}`}
-                  key={person.name}
-                >
-                  <span className={styles.previewAvatar}>
-                    {person.name.slice(0, 1)}
-                  </span>
-                  <span className={styles.previewName}>{person.name}</span>
+            <div className={styles.previewWorkspace}>
+              <div className={styles.previewGrid}>
+                {previewPeople.map((person) => (
+                  <div
+                    className={`${styles.previewTile} ${styles[person.tone]}`}
+                    key={person.name}
+                  >
+                    <span className={styles.previewAvatar}>
+                      {person.name.slice(0, 1)}
+                    </span>
+                    <span className={styles.previewName}>{person.name}</span>
+                  </div>
+                ))}
+              </div>
+              <aside className={styles.previewChat}>
+                <header>
+                  <MessageCircle size={13} />
+                  <strong>Чат</strong>
+                </header>
+                <div className={styles.previewMessages}>
+                  <article>
+                    <i>Л</i>
+                    <div>
+                      <strong>Лера</strong>
+                      <p>Всем видно экран?</p>
+                    </div>
+                  </article>
+                  <article>
+                    <i>М</i>
+                    <div>
+                      <strong>Миша</strong>
+                      <p>Да, всё отлично.</p>
+                    </div>
+                  </article>
                 </div>
-              ))}
+                <div className={styles.previewComposer}>
+                  <span>Сообщение…</span>
+                  <Send size={11} />
+                </div>
+              </aside>
             </div>
             <div className={styles.previewControls}>
-              <span />
-              <span />
-              <span className={styles.previewHangup} />
-              <span />
-              <span />
+              <span><Mic size={16} /></span>
+              <span><Camera size={16} /></span>
+              <span><MonitorUp size={16} /></span>
+              <i />
+              <span className={styles.previewHangup}><PhoneOff size={17} /></span>
             </div>
           </div>
-          <p className={styles.previewCaption}>
-            Плитки всегда 16:9 и занимают максимум доступного пространства.
-          </p>
+          <p className={styles.previewCaption}>Всё перед глазами</p>
         </div>
       </section>
     </main>

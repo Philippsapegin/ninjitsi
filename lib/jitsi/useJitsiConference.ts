@@ -49,8 +49,11 @@ interface ConferenceController {
   noiseSuppressionEnabled: boolean;
   noiseSuppressionSupported: boolean;
   participantConnections: ParticipantConnectionInfo[];
-  sendChatAttachment: (file: File) => Promise<void>;
-  sendChatMessage: (text: string) => void;
+  sendChatAttachment: (
+    file: File,
+    recipientIds?: string[],
+  ) => Promise<void>;
+  sendChatMessage: (text: string, recipientIds?: string[]) => void;
   setAudioInputDevice: (deviceId: string) => Promise<void>;
   setNoiseSuppressionEnabled: (enabled: boolean) => Promise<void>;
   setVideoInputDevice: (deviceId: string) => Promise<void>;
@@ -75,6 +78,7 @@ const demoNames = [
 
 const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
 const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
+const PRIVATE_CHAT_MESSAGE_TYPE = "ninjitsi.private-chat.v1";
 const ATTACHMENT_CHUNK_SIZE = 12_000;
 const MAX_RECONNECT_DELAY = 15_000;
 const RECOVERABLE_CONFERENCE_ERRORS = new Set([
@@ -111,8 +115,10 @@ interface IncomingAttachment {
   avatarUrl: string;
   chunks: string[];
   id: string;
+  isPrivate: boolean;
   mimeType: string;
   name: string;
+  recipientNames: string[];
   senderId: string;
   senderName: string;
   size: number;
@@ -131,6 +137,13 @@ type PingWireMessage =
       kind: "response";
       to: string;
     };
+
+interface PrivateChatWireMessage {
+  message: string;
+  recipientNames: string[];
+  timestamp: number;
+  type: typeof PRIVATE_CHAT_MESSAGE_TYPE;
+}
 
 type LocalMediaDevice = "audio" | "video" | "desktop";
 
@@ -166,6 +179,61 @@ function parsePingWireMessage(text: string) {
 
 function pingMessage(message: PingWireMessage) {
   return `${PING_MESSAGE_PREFIX}${JSON.stringify(message)}`;
+}
+
+function parsePrivateChatWireMessage(
+  payload: unknown,
+): PrivateChatWireMessage | null {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("type" in payload) ||
+    payload.type !== PRIVATE_CHAT_MESSAGE_TYPE ||
+    !("message" in payload) ||
+    typeof payload.message !== "string" ||
+    !("timestamp" in payload) ||
+    typeof payload.timestamp !== "number" ||
+    !("recipientNames" in payload) ||
+    !Array.isArray(payload.recipientNames)
+  ) {
+    return null;
+  }
+
+  return {
+    message: payload.message,
+    recipientNames: payload.recipientNames
+      .filter((name): name is string => typeof name === "string")
+      .slice(0, 30),
+    timestamp: payload.timestamp,
+    type: PRIVATE_CHAT_MESSAGE_TYPE,
+  };
+}
+
+function deliverChatWireMessage(
+  conference: JitsiConferenceLike,
+  message: string,
+  recipients: Array<{ id: string; name: string }>,
+  timestamp: number,
+) {
+  if (recipients.length === 0) {
+    conference.sendTextMessage?.(message);
+    return;
+  }
+
+  const payload: PrivateChatWireMessage = {
+    message,
+    recipientNames: recipients.map((recipient) => recipient.name),
+    timestamp,
+    type: PRIVATE_CHAT_MESSAGE_TYPE,
+  };
+
+  recipients.forEach((recipient) => {
+    if (conference.sendMessage) {
+      conference.sendMessage(payload, recipient.id, false);
+    } else {
+      conference.sendEndpointMessage?.(recipient.id, payload);
+    }
+  });
 }
 
 async function readFileAsDataUrl(file: File) {
@@ -819,6 +887,195 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 syncParticipants();
               },
             );
+
+            const receiveChatText = (
+              rawSenderId: string,
+              rawText: string,
+              rawTimestamp: unknown,
+              isPrivate = false,
+              recipientNames: string[] = [],
+            ) => {
+              if (rawSenderId === localIdRef.current) {
+                return;
+              }
+
+              const pingWireMessage = isPrivate
+                ? null
+                : parsePingWireMessage(rawText);
+
+              if (pingWireMessage) {
+                if (pingWireMessage.to !== localIdRef.current) {
+                  return;
+                }
+
+                if (pingWireMessage.kind === "request") {
+                  conference.sendTextMessage?.(
+                    pingMessage({
+                      id: pingWireMessage.id,
+                      kind: "response",
+                      to: rawSenderId,
+                    }),
+                  );
+                } else {
+                  const pending = pendingPingsRef.current.get(
+                    pingWireMessage.id,
+                  );
+
+                  pendingPingsRef.current.delete(pingWireMessage.id);
+                  if (
+                    pending?.participantId === rawSenderId &&
+                    Number.isFinite(pending.startedAt)
+                  ) {
+                    const pingMs = Math.max(
+                      0,
+                      Math.round(
+                        window.performance.now() - pending.startedAt,
+                      ),
+                    );
+
+                    setConnectionStats((current) => ({
+                      ...current,
+                      [rawSenderId]: {
+                        pingMs,
+                        quality: current[rawSenderId]?.quality ?? null,
+                      },
+                    }));
+                  }
+                }
+
+                return;
+              }
+
+              const sender = conference
+                .getParticipants()
+                .find(
+                  (participant) =>
+                    participant.getId() === rawSenderId,
+                );
+              const numericTimestamp =
+                typeof rawTimestamp === "number"
+                  ? rawTimestamp
+                  : Number.NaN;
+              const parsedTimestamp =
+                typeof rawTimestamp === "string" && rawTimestamp
+                  ? Date.parse(rawTimestamp)
+                  : Number.NaN;
+              const timestamp =
+                Number.isFinite(numericTimestamp) &&
+                numericTimestamp > 0
+                  ? numericTimestamp < 1_000_000_000_000
+                    ? numericTimestamp * 1000
+                    : numericTimestamp
+                  : Number.isFinite(parsedTimestamp)
+                    ? parsedTimestamp
+                    : Date.now();
+              const wireMessage = parseAttachmentWireMessage(rawText);
+
+              if (wireMessage) {
+                const transferKey = `${rawSenderId}:${wireMessage.id}`;
+
+                if (wireMessage.kind === "start") {
+                  if (
+                    wireMessage.size < 0 ||
+                    wireMessage.size > MAX_CHAT_ATTACHMENT_SIZE ||
+                    wireMessage.totalChunks < 1 ||
+                    wireMessage.totalChunks > 300
+                  ) {
+                    return;
+                  }
+
+                  incomingAttachmentsRef.current.set(transferKey, {
+                    avatarUrl:
+                      typeof sender?.getProperty?.("avatarURL") === "string"
+                        ? String(sender.getProperty?.("avatarURL"))
+                        : "",
+                    chunks: new Array(wireMessage.totalChunks),
+                    id: wireMessage.id,
+                    isPrivate,
+                    mimeType:
+                      wireMessage.mimeType || "application/octet-stream",
+                    name: wireMessage.name.slice(0, 180) || "Вложение",
+                    recipientNames,
+                    senderId: rawSenderId,
+                    senderName: sender?.getDisplayName() || "Без имени",
+                    size: wireMessage.size,
+                    timestamp,
+                    totalChunks: wireMessage.totalChunks,
+                  });
+                } else if (wireMessage.kind === "chunk") {
+                  const transfer =
+                    incomingAttachmentsRef.current.get(transferKey);
+
+                  if (
+                    transfer &&
+                    wireMessage.index >= 0 &&
+                    wireMessage.index < transfer.totalChunks &&
+                    wireMessage.data.length <=
+                      ATTACHMENT_CHUNK_SIZE + 8
+                  ) {
+                    transfer.chunks[wireMessage.index] = wireMessage.data;
+                  }
+                } else {
+                  const transfer =
+                    incomingAttachmentsRef.current.get(transferKey);
+
+                  incomingAttachmentsRef.current.delete(transferKey);
+                  if (
+                    !transfer ||
+                    transfer.chunks.some(
+                      (chunk) => typeof chunk !== "string",
+                    )
+                  ) {
+                    return;
+                  }
+
+                  const attachment: ChatAttachment = {
+                    dataUrl: `data:${transfer.mimeType};base64,${transfer.chunks.join("")}`,
+                    id: transfer.id,
+                    mimeType: transfer.mimeType,
+                    name: transfer.name,
+                    size: transfer.size,
+                  };
+
+                  setChatMessages((messages) => [
+                    ...messages,
+                    {
+                      attachments: [attachment],
+                      avatarUrl: transfer.avatarUrl,
+                      id: `${rawSenderId}-${transfer.id}`,
+                      isLocal: false,
+                      isPrivate: transfer.isPrivate,
+                      recipientNames: transfer.recipientNames,
+                      senderId: rawSenderId,
+                      senderName: transfer.senderName,
+                      text: "",
+                      timestamp: transfer.timestamp,
+                    },
+                  ]);
+                }
+
+                return;
+              }
+
+              setChatMessages((messages) => [
+                ...messages,
+                {
+                  avatarUrl:
+                    typeof sender?.getProperty?.("avatarURL") === "string"
+                      ? String(sender.getProperty?.("avatarURL"))
+                      : "",
+                  id: `${rawSenderId}-${timestamp}-${messages.length}`,
+                  isLocal: false,
+                  isPrivate,
+                  recipientNames,
+                  senderId: rawSenderId,
+                  senderName: sender?.getDisplayName() || "Без имени",
+                  text: rawText,
+                  timestamp,
+                },
+              ]);
+            };
+
             if (conferenceEvents.MESSAGE_RECEIVED) {
               conference.on(
                 conferenceEvents.MESSAGE_RECEIVED,
@@ -830,177 +1087,37 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     return;
                   }
 
-                  if (rawSenderId === localIdRef.current) {
+                  receiveChatText(rawSenderId, rawText, rawTimestamp);
+                },
+              );
+            }
+            if (conferenceEvents.ENDPOINT_MESSAGE_RECEIVED) {
+              conference.on(
+                conferenceEvents.ENDPOINT_MESSAGE_RECEIVED,
+                (rawParticipant, rawPayload) => {
+                  const privateMessage =
+                    parsePrivateChatWireMessage(rawPayload);
+                  const senderId =
+                    typeof rawParticipant === "string"
+                      ? rawParticipant
+                      : rawParticipant &&
+                          typeof rawParticipant === "object" &&
+                          "getId" in rawParticipant &&
+                          typeof rawParticipant.getId === "function"
+                        ? rawParticipant.getId()
+                        : null;
+
+                  if (!privateMessage || typeof senderId !== "string") {
                     return;
                   }
 
-                  const pingWireMessage = parsePingWireMessage(rawText);
-
-                  if (pingWireMessage) {
-                    if (pingWireMessage.to !== localIdRef.current) {
-                      return;
-                    }
-
-                    if (pingWireMessage.kind === "request") {
-                      conference.sendTextMessage?.(
-                        pingMessage({
-                          id: pingWireMessage.id,
-                          kind: "response",
-                          to: rawSenderId,
-                        }),
-                      );
-                    } else {
-                      const pending = pendingPingsRef.current.get(
-                        pingWireMessage.id,
-                      );
-
-                      pendingPingsRef.current.delete(pingWireMessage.id);
-                      if (
-                        pending?.participantId === rawSenderId &&
-                        Number.isFinite(pending.startedAt)
-                      ) {
-                        const pingMs = Math.max(
-                          0,
-                          Math.round(
-                            window.performance.now() - pending.startedAt,
-                          ),
-                        );
-
-                        setConnectionStats((current) => ({
-                          ...current,
-                          [rawSenderId]: {
-                            pingMs,
-                            quality: current[rawSenderId]?.quality ?? null,
-                          },
-                        }));
-                      }
-                    }
-
-                    return;
-                  }
-
-                  const sender = conference
-                    .getParticipants()
-                    .find(
-                      (participant) =>
-                        participant.getId() === rawSenderId,
-                    );
-                  const numericTimestamp =
-                    typeof rawTimestamp === "number"
-                      ? rawTimestamp
-                      : Number.NaN;
-                  const parsedTimestamp =
-                    typeof rawTimestamp === "string" && rawTimestamp
-                      ? Date.parse(rawTimestamp)
-                      : Number.NaN;
-                  const timestamp =
-                    Number.isFinite(numericTimestamp) &&
-                    numericTimestamp > 0
-                      ? numericTimestamp < 1_000_000_000_000
-                        ? numericTimestamp * 1000
-                        : numericTimestamp
-                      : Number.isFinite(parsedTimestamp)
-                        ? parsedTimestamp
-                        : Date.now();
-                  const wireMessage = parseAttachmentWireMessage(rawText);
-
-                  if (wireMessage) {
-                    const transferKey = `${rawSenderId}:${wireMessage.id}`;
-
-                    if (wireMessage.kind === "start") {
-                      if (
-                        wireMessage.size < 0 ||
-                        wireMessage.size > MAX_CHAT_ATTACHMENT_SIZE ||
-                        wireMessage.totalChunks < 1 ||
-                        wireMessage.totalChunks > 300
-                      ) {
-                        return;
-                      }
-
-                      incomingAttachmentsRef.current.set(transferKey, {
-                        avatarUrl:
-                          typeof sender?.getProperty?.("avatarURL") === "string"
-                            ? String(sender.getProperty?.("avatarURL"))
-                            : "",
-                        chunks: new Array(wireMessage.totalChunks),
-                        id: wireMessage.id,
-                        mimeType:
-                          wireMessage.mimeType || "application/octet-stream",
-                        name: wireMessage.name.slice(0, 180) || "Вложение",
-                        senderId: rawSenderId,
-                        senderName: sender?.getDisplayName() || "Без имени",
-                        size: wireMessage.size,
-                        timestamp,
-                        totalChunks: wireMessage.totalChunks,
-                      });
-                    } else if (wireMessage.kind === "chunk") {
-                      const transfer =
-                        incomingAttachmentsRef.current.get(transferKey);
-
-                      if (
-                        transfer &&
-                        wireMessage.index >= 0 &&
-                        wireMessage.index < transfer.totalChunks &&
-                        wireMessage.data.length <=
-                          ATTACHMENT_CHUNK_SIZE + 8
-                      ) {
-                        transfer.chunks[wireMessage.index] = wireMessage.data;
-                      }
-                    } else {
-                      const transfer =
-                        incomingAttachmentsRef.current.get(transferKey);
-
-                      incomingAttachmentsRef.current.delete(transferKey);
-                      if (
-                        !transfer ||
-                        transfer.chunks.some(
-                          (chunk) => typeof chunk !== "string",
-                        )
-                      ) {
-                        return;
-                      }
-
-                      const attachment: ChatAttachment = {
-                        dataUrl: `data:${transfer.mimeType};base64,${transfer.chunks.join("")}`,
-                        id: transfer.id,
-                        mimeType: transfer.mimeType,
-                        name: transfer.name,
-                        size: transfer.size,
-                      };
-
-                      setChatMessages((messages) => [
-                        ...messages,
-                        {
-                          attachments: [attachment],
-                          avatarUrl: transfer.avatarUrl,
-                          id: `${rawSenderId}-${transfer.id}`,
-                          isLocal: false,
-                          senderId: rawSenderId,
-                          senderName: transfer.senderName,
-                          text: "",
-                          timestamp: transfer.timestamp,
-                        },
-                      ]);
-                    }
-
-                    return;
-                  }
-
-                  setChatMessages((messages) => [
-                    ...messages,
-                    {
-                      avatarUrl:
-                        typeof sender?.getProperty?.("avatarURL") === "string"
-                          ? String(sender.getProperty?.("avatarURL"))
-                          : "",
-                      id: `${rawSenderId}-${timestamp}-${messages.length}`,
-                      isLocal: false,
-                      senderId: rawSenderId,
-                      senderName: sender?.getDisplayName() || "Без имени",
-                      text: rawText,
-                      timestamp,
-                    },
-                  ]);
+                  receiveChatText(
+                    senderId,
+                    privateMessage.message,
+                    privateMessage.timestamp,
+                    true,
+                    privateMessage.recipientNames,
+                  );
                 },
               );
             }
@@ -1664,46 +1781,109 @@ export function useJitsiConference(roomName: string): ConferenceController {
     [isDemo, persistMediaPreferences, serverUrl, setMediaBusy],
   );
 
-  const sendChatMessage = useCallback((rawText: string) => {
-    const text = rawText.trim();
+  const sendChatMessage = useCallback(
+    (rawText: string, recipientIds: string[] = []) => {
+      const text = rawText.trim();
 
-    if (!text) {
-      return;
-    }
+      if (!text) {
+        return;
+      }
 
-    const conference = conferenceRef.current;
+      const conference = conferenceRef.current;
+      const requestedRecipientIds = new Set(recipientIds);
+      const recipients = participants
+        .filter(
+          (participant) =>
+            !participant.isLocal &&
+            requestedRecipientIds.has(participant.id),
+        )
+        .map((participant) => ({
+          id: participant.id,
+          name: participant.displayName,
+        }));
+      const isPrivate = requestedRecipientIds.size > 0;
 
-    if (!isDemo && !conference?.sendTextMessage) {
-      setError("Чат недоступен в этой сборке Jitsi.");
-      return;
-    }
+      if (isPrivate && recipients.length === 0) {
+        setError("Выбранные получатели уже покинули встречу.");
+        return;
+      }
 
-    conference?.sendTextMessage?.(text);
-    setChatMessages((messages) => [
-      ...messages,
-      {
-        avatarUrl: localAvatarRef.current,
-        id: `local-${Date.now()}-${messages.length}`,
-        isLocal: true,
-        senderId: localIdRef.current,
-        senderName: localNameRef.current,
-        text,
-        timestamp: Date.now(),
-      },
-    ]);
-  }, [isDemo]);
+      if (
+        !isDemo &&
+        (isPrivate
+          ? !conference?.sendMessage &&
+            !conference?.sendEndpointMessage
+          : !conference?.sendTextMessage)
+      ) {
+        setError(
+          isPrivate
+            ? "Личные сообщения недоступны в этой сборке Jitsi."
+            : "Чат недоступен в этой сборке Jitsi.",
+        );
+        return;
+      }
+
+      const timestamp = Date.now();
+
+      if (!isDemo && conference) {
+        deliverChatWireMessage(conference, text, recipients, timestamp);
+      }
+      setChatMessages((messages) => [
+        ...messages,
+        {
+          avatarUrl: localAvatarRef.current,
+          id: `local-${timestamp}-${messages.length}`,
+          isLocal: true,
+          isPrivate,
+          recipientNames: recipients.map((recipient) => recipient.name),
+          senderId: localIdRef.current,
+          senderName: localNameRef.current,
+          text,
+          timestamp,
+        },
+      ]);
+    },
+    [isDemo, participants],
+  );
 
   const sendChatAttachment = useCallback(
-    async (file: File) => {
+    async (file: File, recipientIds: string[] = []) => {
       if (file.size > MAX_CHAT_ATTACHMENT_SIZE) {
         setError("Вложение должно быть не больше 2 МБ.");
         return;
       }
 
       const conference = conferenceRef.current;
+      const requestedRecipientIds = new Set(recipientIds);
+      const recipients = participants
+        .filter(
+          (participant) =>
+            !participant.isLocal &&
+            requestedRecipientIds.has(participant.id),
+        )
+        .map((participant) => ({
+          id: participant.id,
+          name: participant.displayName,
+        }));
+      const isPrivate = requestedRecipientIds.size > 0;
 
-      if (!isDemo && !conference?.sendTextMessage) {
-        setError("Вложения недоступны в этой сборке Jitsi.");
+      if (isPrivate && recipients.length === 0) {
+        setError("Выбранные получатели уже покинули встречу.");
+        return;
+      }
+
+      if (
+        !isDemo &&
+        (isPrivate
+          ? !conference?.sendMessage &&
+            !conference?.sendEndpointMessage
+          : !conference?.sendTextMessage)
+      ) {
+        setError(
+          isPrivate
+            ? "Личные вложения недоступны в этой сборке Jitsi."
+            : "Вложения недоступны в этой сборке Jitsi.",
+        );
         return;
       }
 
@@ -1723,6 +1903,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
           name: file.name || "Вложение",
           size: file.size,
         };
+        const timestamp = Date.now();
 
         setChatMessages((messages) => [
           ...messages,
@@ -1731,10 +1912,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
             avatarUrl: localAvatarRef.current,
             id: `local-${attachmentId}`,
             isLocal: true,
+            isPrivate,
+            recipientNames: recipients.map((recipient) => recipient.name),
             senderId: localIdRef.current,
             senderName: localNameRef.current,
             text: "",
-            timestamp: Date.now(),
+            timestamp,
           },
         ]);
 
@@ -1756,7 +1939,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
             ),
         );
 
-        conference?.sendTextMessage?.(
+        deliverChatWireMessage(
+          conference!,
           attachmentMessage({
             id: attachmentId,
             kind: "start",
@@ -1765,16 +1949,21 @@ export function useJitsiConference(roomName: string): ConferenceController {
             size: attachment.size,
             totalChunks: chunks.length,
           }),
+          recipients,
+          timestamp,
         );
 
         for (let index = 0; index < chunks.length; index += 1) {
-          conference?.sendTextMessage?.(
+          deliverChatWireMessage(
+            conference!,
             attachmentMessage({
               data: chunks[index],
               id: attachmentId,
               index,
               kind: "chunk",
             }),
+            recipients,
+            timestamp,
           );
 
           if (index > 0 && index % 20 === 0) {
@@ -1784,11 +1973,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
           }
         }
 
-        conference?.sendTextMessage?.(
+        deliverChatWireMessage(
+          conference!,
           attachmentMessage({
             id: attachmentId,
             kind: "end",
           }),
+          recipients,
+          timestamp,
         );
       } catch {
         setError("Не удалось отправить вложение.");
@@ -1796,7 +1988,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         setIsSendingAttachment(false);
       }
     },
-    [isDemo],
+    [isDemo, participants],
   );
 
   const leave = useCallback(async () => {

@@ -52,6 +52,11 @@ export interface JitsiConferenceLike {
     newTrack: JitsiTrackLike,
   ) => Promise<void>;
   sendEndpointMessage?: (participantId: string, payload: object) => void;
+  sendMessage?: (
+    message: object | string,
+    participantId?: string,
+    sendThroughVideobridge?: boolean,
+  ) => void;
   sendTextMessage?: (message: string) => void;
   setDisplayName: (displayName: string) => void;
   setLocalParticipantProperty?: (name: string, value: string) => void;
@@ -114,7 +119,9 @@ export interface ChatMessage {
   attachments?: ChatAttachment[];
   avatarUrl?: string;
   id: string;
+  isPrivate?: boolean;
   isLocal: boolean;
+  recipientNames?: string[];
   senderId: string;
   senderName: string;
   text: string;

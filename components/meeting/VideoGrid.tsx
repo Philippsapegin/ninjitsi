@@ -9,12 +9,19 @@ import styles from "./VideoGrid.module.css";
 interface VideoGridProps {
   focusedParticipantId: string | null;
   onParticipantClick: (participantId: string | null) => void;
+  onParticipantVolumeChange: (
+    participantId: string,
+    volume: number,
+  ) => void;
+  participantVolumes: Record<string, number>;
   participants: ParticipantView[];
 }
 
 export function VideoGrid({
   focusedParticipantId,
   onParticipantClick,
+  onParticipantVolumeChange,
+  participantVolumes,
   participants,
 }: VideoGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,14 +44,20 @@ export function VideoGrid({
     return (
       <div className={`${styles.viewport} ${styles.sceneViewport}`}>
         <div className={styles.scene}>
-          <button
-            aria-label={`Вернуть сетку из сцены ${focusedParticipant.displayName}`}
-            className={styles.sceneMain}
-            onClick={() => onParticipantClick(null)}
-            type="button"
-          >
-            <VideoTile participant={focusedParticipant} />
-          </button>
+          <div className={styles.sceneMain}>
+            <VideoTile
+              activationLabel={`Вернуть сетку из сцены ${focusedParticipant.displayName}`}
+              onActivate={() => onParticipantClick(null)}
+              onVolumeChange={(volume) =>
+                onParticipantVolumeChange(
+                  focusedParticipant.id,
+                  volume,
+                )
+              }
+              participant={focusedParticipant}
+              volume={participantVolumes[focusedParticipant.id] ?? 1}
+            />
+          </div>
 
           {otherParticipants.length > 0 && (
             <div
@@ -55,15 +68,20 @@ export function VideoGrid({
               }}
             >
               {otherParticipants.map((participant) => (
-                <button
-                  aria-label={`Показать на сцене ${participant.displayName}`}
+                <div
                   className={styles.sceneCell}
                   key={participant.id}
-                  onClick={() => onParticipantClick(participant.id)}
-                  type="button"
                 >
-                  <VideoTile participant={participant} />
-                </button>
+                  <VideoTile
+                    activationLabel={`Показать на сцене ${participant.displayName}`}
+                    onActivate={() => onParticipantClick(participant.id)}
+                    onVolumeChange={(volume) =>
+                      onParticipantVolumeChange(participant.id, volume)
+                    }
+                    participant={participant}
+                    volume={participantVolumes[participant.id] ?? 1}
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -83,16 +101,21 @@ export function VideoGrid({
         }}
       >
         {participants.map((participant) => (
-          <button
-            aria-label={`Показать на сцене ${participant.displayName}`}
+          <div
             className={styles.cell}
             key={participant.id}
-            onClick={() => onParticipantClick(participant.id)}
             style={{ height: tileHeight, width: tileWidth }}
-            type="button"
           >
-            <VideoTile participant={participant} />
-          </button>
+            <VideoTile
+              activationLabel={`Показать на сцене ${participant.displayName}`}
+              onActivate={() => onParticipantClick(participant.id)}
+              onVolumeChange={(volume) =>
+                onParticipantVolumeChange(participant.id, volume)
+              }
+              participant={participant}
+              volume={participantVolumes[participant.id] ?? 1}
+            />
+          </div>
         ))}
       </div>
     </div>

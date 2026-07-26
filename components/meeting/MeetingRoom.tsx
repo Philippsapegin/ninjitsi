@@ -59,6 +59,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const [focusedParticipantId, setFocusedParticipantId] = useState<
     string | null
   >(null);
+  const [participantVolumes, setParticipantVolumes] = useState<
+    Record<string, number>
+  >({});
   const [roomGate, setRoomGate] = useState<RoomGate>({
     status: "checking",
     error: null,
@@ -259,6 +262,13 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     }
   }
 
+  function setParticipantVolume(participantId: string, volume: number) {
+    setParticipantVolumes((current) => ({
+      ...current,
+      [participantId]: Math.min(2, Math.max(0, volume)),
+    }));
+  }
+
   if (roomGate.status !== "ready") {
     return (
       <main className={styles.room}>
@@ -353,6 +363,8 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             <VideoGrid
               focusedParticipantId={activeFocusedParticipantId}
               onParticipantClick={setFocusedParticipantId}
+              onParticipantVolumeChange={setParticipantVolume}
+              participantVolumes={participantVolumes}
               participants={conference.participants}
             />
           ) : (
@@ -369,6 +381,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           messages={conference.chatMessages}
           onSend={conference.sendChatMessage}
           onSendAttachment={conference.sendChatAttachment}
+          participants={conference.participants}
         />
       </div>
 
@@ -386,7 +399,10 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         onToggleVideo={() => void conference.toggleVideo()}
       />
 
-      <AudioSinks participants={conference.participants} />
+      <AudioSinks
+        participantVolumes={participantVolumes}
+        participants={conference.participants}
+      />
 
       {conference.status === "reconnecting" && (
         <div className={styles.reconnecting}>

@@ -1,10 +1,21 @@
-import { MicOff, MonitorUp, ShieldCheck } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  MicOff,
+  MonitorUp,
+  ShieldCheck,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import type { ParticipantView } from "@/lib/jitsi/types";
 import { VideoTrack } from "./MediaTrack";
 import styles from "./VideoTile.module.css";
 
 interface VideoTileProps {
+  activationLabel: string;
+  onActivate: () => void;
+  onVolumeChange: (volume: number) => void;
   participant: ParticipantView;
+  volume: number;
 }
 
 const gradients = [
@@ -34,9 +45,37 @@ function initials(name: string) {
     .join("");
 }
 
-export function VideoTile({ participant }: VideoTileProps) {
+export function VideoTile({
+  activationLabel,
+  onActivate,
+  onVolumeChange,
+  participant,
+  volume,
+}: VideoTileProps) {
+  const [volumeOpen, setVolumeOpen] = useState(false);
+  const volumeControlRef = useRef<HTMLDivElement>(null);
   const hasVisibleVideo =
     participant.videoTrack && !participant.videoMuted;
+  const volumePercent = Math.round(volume * 100);
+
+  useEffect(() => {
+    if (!volumeOpen) {
+      return;
+    }
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !volumeControlRef.current?.contains(event.target)
+      ) {
+        setVolumeOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () =>
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [volumeOpen]);
 
   return (
     <article
@@ -68,17 +107,67 @@ export function VideoTile({ participant }: VideoTileProps) {
 
       <div className={styles.scrim} />
 
-      <div className={styles.identity}>
-        <span className={styles.name}>
-          {participant.displayName}
-          {participant.isLocal && <em>вы</em>}
-        </span>
+      <button
+        aria-label={activationLabel}
+        className={styles.activationSurface}
+        onClick={onActivate}
+        type="button"
+      />
+
+      <div className={styles.identity} ref={volumeControlRef}>
+        {participant.isLocal ? (
+          <span className={styles.name}>{participant.displayName}</span>
+        ) : (
+          <button
+            aria-expanded={volumeOpen}
+            aria-label={`Громкость участника ${participant.displayName}: ${volumePercent}%`}
+            className={styles.nameButton}
+            onClick={() => setVolumeOpen((current) => !current)}
+            type="button"
+          >
+            {participant.displayName}
+          </button>
+        )}
         {participant.isModerator && (
           <ShieldCheck
             aria-label="Модератор"
             className={styles.moderator}
             size={14}
           />
+        )}
+
+        {!participant.isLocal && volumeOpen && (
+          <section
+            aria-label={`Громкость ${participant.displayName}`}
+            className={styles.volumeControl}
+          >
+            <header>
+              <span>Громкость</span>
+              <strong>{volumePercent}%</strong>
+            </header>
+            <div>
+              {volumePercent === 0 ? (
+                <VolumeX size={14} />
+              ) : (
+                <Volume2 size={14} />
+              )}
+              <input
+                aria-label={`Громкость ${participant.displayName}`}
+                data-participant-volume={participant.id}
+                max="200"
+                min="0"
+                onChange={(event) =>
+                  onVolumeChange(Number(event.target.value) / 100)
+                }
+                step="1"
+                type="range"
+                value={volumePercent}
+              />
+            </div>
+            <button onClick={() => onVolumeChange(1)} type="button">
+              Сбросить на 100%
+            </button>
+          </section>
         )}
       </div>
 
