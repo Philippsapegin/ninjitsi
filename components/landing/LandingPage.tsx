@@ -2,7 +2,6 @@
 
 import { FormEvent, useState } from "react";
 import { ArrowRight, LockKeyhole, ShieldCheck, Video } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Brand } from "@/components/brand/Brand";
 import {
   normalizeRoomName,
@@ -29,7 +28,6 @@ function makeRoomName() {
 }
 
 export function LandingPage() {
-  const router = useRouter();
   const [roomName, setRoomName] = useState(makeRoomName);
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -49,7 +47,7 @@ export function LandingPage() {
       startVideoMuted: false,
     });
 
-    router.push(`/room/${encodeURIComponent(normalizedRoom)}`);
+    window.location.assign(`/room/${encodeURIComponent(normalizedRoom)}`);
   }
 
   return (

@@ -1,11 +1,11 @@
-"use client";
-
-import { useParams } from "next/navigation";
 import { MeetingRoom } from "@/components/meeting/MeetingRoom";
 
-export default function RoomPage() {
-  const params = useParams<{ roomName: string }>();
-  const roomName = decodeURIComponent(params.roomName);
+interface RoomPageProps {
+  params: Promise<{ roomName: string }>;
+}
 
-  return <MeetingRoom roomName={roomName} />;
+export default async function RoomPage({ params }: RoomPageProps) {
+  const { roomName } = await params;
+
+  return <MeetingRoom roomName={decodeURIComponent(roomName)} />;
 }

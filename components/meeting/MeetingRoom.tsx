@@ -10,7 +10,6 @@ import {
   Users,
   WifiOff,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Brand } from "@/components/brand/Brand";
 import { useCallTimer } from "@/hooks/useCallTimer";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
@@ -34,7 +33,6 @@ interface MeetingRoomProps {
 }
 
 export function MeetingRoom({ roomName }: MeetingRoomProps) {
-  const router = useRouter();
   const conference = useJitsiConference(roomName);
   const [joinDetails, setJoinDetails] =
     useState<JoinOptions>(EMPTY_JOIN_DETAILS);
@@ -90,7 +88,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
   async function hangup() {
     await conference.leave();
-    router.push("/");
+    window.location.assign("/");
   }
 
   async function copyLink() {

@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
-    "build:cloudflare": "opennextjs-cloudflare build",
+    "build:cloudflare": "opennextjs-cloudflare build && node scripts/make-static-worker.mjs",
     "preview:cloudflare": "opennextjs-cloudflare preview",
     "start": "next start",
     "lint": "eslint .",
