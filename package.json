@@ -1,0 +1,38 @@
+{
+  "name": "ninjitsi",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "build:cloudflare": "opennextjs-cloudflare build",
+    "preview:cloudflare": "opennextjs-cloudflare preview",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "smoke:visual": "node scripts/visual-smoke.mjs"
+  },
+  "dependencies": {
+    "@opennextjs/cloudflare": "^1.20.2",
+    "lucide-react": "^1.27.0",
+    "next": "^16.2.12",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.2.12",
+    "playwright-core": "^1.62.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.114.0"
+  },
+  "overrides": {
+    "brace-expansion": "^5.0.8",
+    "minimatch": "^10.2.5",
+    "postcss": "^8.5.23",
+    "sharp": "^0.35.3"
+  }
+}

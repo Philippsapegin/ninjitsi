@@ -1,0 +1,9 @@
+.next/
+.open-next/
+.wrangler/
+node_modules/
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+*.tsbuildinfo
