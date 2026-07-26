@@ -43,12 +43,15 @@ function calculateGrid(
       tileHeight <= heightByRows + 0.5 &&
       area > bestArea
     ) {
+      const fittedWidth = Math.floor(tileWidth);
+      const fittedHeight = fittedWidth * (9 / 16);
+
       bestArea = area;
       best = {
         columns,
         gap,
-        tileHeight: Math.floor(tileHeight),
-        tileWidth: Math.floor(tileWidth),
+        tileHeight: fittedHeight,
+        tileWidth: fittedWidth,
       };
     }
   }

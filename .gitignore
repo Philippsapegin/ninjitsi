@@ -1,6 +1,7 @@
 .next/
 .open-next/
 .wrangler/
+.local/
 node_modules/
 .env
 .env.local

@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isGridLabRoom } from "@/lib/gridLab";
+import { useJitsiServerUrl } from "@/lib/runtimeConfig";
 import { loadJitsiRuntime } from "./loader";
 import type {
   JitsiConferenceLike,
@@ -51,8 +53,13 @@ function pickPreferredVideo(tracks: JitsiTrackLike[]) {
   );
 }
 
-function createDemoParticipants(displayName: string): ParticipantView[] {
-  const people = [displayName, ...demoNames];
+function createDemoParticipants(
+  displayName: string,
+  roomName: string,
+): ParticipantView[] {
+  const people = isGridLabRoom(roomName)
+    ? [displayName]
+    : [displayName, ...demoNames];
 
   return people.map((name, index) => ({
     audioMuted: index === 3,
@@ -67,8 +74,7 @@ function createDemoParticipants(displayName: string): ParticipantView[] {
 }
 
 export function useJitsiConference(roomName: string): ConferenceController {
-  const serverUrl =
-    process.env.NEXT_PUBLIC_JITSI_URL?.trim().replace(/\/+$/, "") ?? "";
+  const serverUrl = useJitsiServerUrl();
   const isDemo = !serverUrl;
   const [status, setStatus] = useState<MeetingStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +191,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
       if (isDemo) {
         setStatus("loading");
         await new Promise((resolve) => window.setTimeout(resolve, 420));
-        const demoParticipants = createDemoParticipants(options.displayName);
+        const demoParticipants = createDemoParticipants(
+          options.displayName,
+          roomName,
+        );
 
         demoParticipants[0].audioMuted = options.startAudioMuted;
         demoParticipants[0].videoMuted = options.startVideoMuted;

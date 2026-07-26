@@ -20,7 +20,7 @@ if (!executablePath) {
   );
 }
 
-const baseUrl = process.env.NINJITSI_BASE_URL ?? "http://127.0.0.1:3000";
+const baseUrl = process.env.NINJITSI_BASE_URL ?? "http://localhost:3000";
 const screenshotPath =
   process.env.NINJITSI_SCREENSHOT ??
   join(tmpdir(), `ninjitsi-grid-${Date.now()}.png`);
@@ -37,74 +37,96 @@ page.on("pageerror", (pageError) => {
 });
 
 try {
-  await page.goto(`${baseUrl}/room/visual-check`, {
+  await page.goto(`${baseUrl}/room/grid-lab`, {
     waitUntil: "networkidle",
   });
-  await page.getByLabel("Ваше имя").fill("Алексей");
+  await page.getByLabel("Ваше имя").fill("Grid Tester");
   await page.getByRole("button", { name: "Войти в комнату" }).click();
   await page.locator("article").first().waitFor();
+  await page
+    .getByRole("region", { name: "Лаборатория видеосетки" })
+    .waitFor();
 
   const viewportResults = [];
 
-  for (const viewport of [
-    { width: 1040, height: 720 },
-    { width: 1920, height: 1080 },
-    { width: 1440, height: 900 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await page.waitForTimeout(220);
+  for (const phantomCount of [0, 5, 15, 35]) {
+    await page
+      .getByRole("button", { name: String(phantomCount), exact: true })
+      .click();
 
-    const tileMetrics = await page.locator("article").evaluateAll((tiles) =>
-      tiles.map((tile) => {
-        const bounds = tile.getBoundingClientRect();
+    for (const viewport of [
+      { width: 1040, height: 720 },
+      { width: 1920, height: 1080 },
+      { width: 1440, height: 900 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(400);
 
-        return {
-          bottom: bounds.bottom,
-          height: bounds.height,
-          ratio: bounds.width / bounds.height,
-          top: bounds.top,
-          width: bounds.width,
-        };
-      }),
-    );
-    const pageMetrics = await page.evaluate(() => ({
-      clientWidth: document.documentElement.clientWidth,
-      controlsTop: document
-        .querySelector("footer")
-        ?.getBoundingClientRect().top,
-      headerBottom: document
-        .querySelector("header")
-        ?.getBoundingClientRect().bottom,
-      scrollWidth: document.documentElement.scrollWidth,
-    }));
+      const tileMetrics = await page.locator("article").evaluateAll((tiles) =>
+        tiles.map((tile) => {
+          const bounds = tile.getBoundingClientRect();
 
-    if (
-      !tileMetrics.every(
-        ({ ratio }) => Math.abs(ratio - 16 / 9) < 0.015,
-      )
-    ) {
-      throw new Error(
-        `Нарушено соотношение плиток: ${JSON.stringify(tileMetrics)}`,
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            ratio: bounds.width / bounds.height,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        }),
       );
-    }
+      const pageMetrics = await page.evaluate(() => ({
+        clientWidth: document.documentElement.clientWidth,
+        controlsTop: document
+          .querySelector("footer")
+          ?.getBoundingClientRect().top,
+        gridTop: document
+          .querySelector("article")
+          ?.parentElement?.parentElement?.getBoundingClientRect().top,
+        scrollWidth: document.documentElement.scrollWidth,
+      }));
 
-    if (
-      tileMetrics.some(
-        ({ bottom, top }) =>
-          top < (pageMetrics.headerBottom ?? 0) ||
-          bottom > (pageMetrics.controlsTop ?? Number.POSITIVE_INFINITY),
-      )
-    ) {
-      throw new Error(`Плитки пересекаются с панелями на ${viewport.width}x${viewport.height}`);
-    }
+      if (tileMetrics.length !== phantomCount + 1) {
+        throw new Error(
+          `Ожидалось ${phantomCount + 1} плиток, найдено ${tileMetrics.length}`,
+        );
+      }
 
-    if (pageMetrics.scrollWidth !== pageMetrics.clientWidth) {
-      throw new Error(
-        `На ${viewport.width}x${viewport.height} появился горизонтальный скролл`,
-      );
-    }
+      if (
+        !tileMetrics.every(
+          ({ ratio }) => Math.abs(ratio - 16 / 9) < 0.001,
+        )
+      ) {
+        throw new Error(
+          `Нарушено соотношение плиток: ${JSON.stringify(tileMetrics)}`,
+        );
+      }
 
-    viewportResults.push({ pageMetrics, tileMetrics, viewport });
+      if (
+        tileMetrics.some(
+          ({ bottom, top }) =>
+            top < (pageMetrics.gridTop ?? 0) ||
+            bottom > (pageMetrics.controlsTop ?? Number.POSITIVE_INFINITY),
+        )
+      ) {
+        throw new Error(
+          `Плитки пересекаются с панелями на ${viewport.width}x${viewport.height}: ${JSON.stringify({ pageMetrics, tileMetrics })}`,
+        );
+      }
+
+      if (pageMetrics.scrollWidth !== pageMetrics.clientWidth) {
+        throw new Error(
+          `На ${viewport.width}x${viewport.height} появился горизонтальный скролл`,
+        );
+      }
+
+      viewportResults.push({
+        pageMetrics,
+        phantomCount,
+        tileMetrics,
+        viewport,
+      });
+    }
   }
 
   if ((await page.locator("aside").count()) !== 0) {
@@ -116,8 +138,13 @@ try {
     JSON.stringify(
       {
         screenshotPath,
-        tileCount: viewportResults[0].tileMetrics.length,
-        viewportResults,
+        scenarios: viewportResults.map(
+          ({ phantomCount, tileMetrics, viewport }) => ({
+            phantomCount,
+            tileCount: tileMetrics.length,
+            viewport,
+          }),
+        ),
       },
       null,
       2,

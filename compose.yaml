@@ -1,0 +1,11 @@
+name: ninjitsi
+
+services:
+  web:
+    build:
+      context: .
+    environment:
+      JITSI_URL: ${JITSI_URL:-https://localhost:8443}
+    ports:
+      - "${NINJITSI_PORT:-3000}:80"
+    restart: unless-stopped
