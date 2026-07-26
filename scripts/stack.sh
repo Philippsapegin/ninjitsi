@@ -70,7 +70,37 @@ JIBRI_XMPP_PASSWORD=$(secret)
 EOF
   fi
 
+  if grep -q '^PUBLIC_URL=http://localhost:8000$' "$jitsi_root/.env"; then
+    sed -i.bak \
+      's|^PUBLIC_URL=http://localhost:8000$|PUBLIC_URL=https://localhost:8443|' \
+      "$jitsi_root/.env"
+    rm -f "$jitsi_root/.env.bak"
+  fi
+
   echo "Jitsi подготовлен в $jitsi_root"
+}
+
+set_local_jitsi_browser_config() {
+  config_file="$jitsi_root/config/web/config.js"
+  attempt=0
+
+  while [ "$attempt" -lt 15 ]; do
+    if [ -f "$config_file" ] && grep -q 'config\.bosh' "$config_file"; then
+      sed -i.bak \
+        -e "s|^config\\.bosh = .*$|config.bosh = 'http://localhost:8000/http-bind';|" \
+        -e "s|^config\\.websocket = .*$|config.websocket = 'ws://localhost:8000/xmpp-websocket';|" \
+        "$config_file"
+      rm -f "$config_file.bak"
+      echo "Jitsi browser signaling uses local HTTP endpoints."
+      return
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  echo "Jitsi config.js was not generated within 30 seconds." >&2
+  exit 1
 }
 
 case "$action" in
@@ -95,6 +125,7 @@ prepare_jitsi
 
 if [ "$action" = "up" ]; then
   (cd "$jitsi_root" && docker compose up -d)
+  set_local_jitsi_browser_config
   (cd "$project_root" && docker compose up -d --build)
 elif [ "$action" = "down" ]; then
   (cd "$jitsi_root" && docker compose down)
@@ -109,5 +140,5 @@ fi
 
 if [ "$action" = "up" ]; then
   printf '\nNinjitsi: http://localhost:3000\n'
-  printf 'Jitsi:    https://localhost:8443\n'
+  printf 'Jitsi:    http://localhost:8000\n'
 fi

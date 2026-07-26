@@ -38,10 +38,12 @@ Linux:
 После запуска:
 
 - Ninjitsi — `http://localhost:3000`;
-- Jitsi — `https://localhost:8443`.
+- Jitsi — `http://localhost:8000`.
 
-Локальный Jitsi использует self-signed сертификат. Перед первым звонком один
-раз откройте `https://localhost:8443` и разрешите браузеру использовать его.
+`localhost` считается браузерами доверенным контекстом, поэтому локальный
+HTTP-профиль работает с камерой, микрофоном и демонстрацией экрана без
+self-signed сертификата и предупреждений Chrome. Скрипт запуска автоматически
+направляет BOSH и XMPP WebSocket Jitsi на локальные `http/ws` endpoints.
 Остановить стек можно через `npm run stack:down` на Windows или
 `./scripts/stack.sh down` на Linux. Скачанный Jitsi, пароли и состояние
 контейнеров лежат в `.local/` и не попадают в Git. Реестр комнат Ninjitsi
@@ -63,7 +65,7 @@ npm start
 `GET /api/rooms/<code>` и сохраняет реестр в `.data/rooms.json`.
 
 Без `JITSI_URL` локальный Node-сервер ожидает Jitsi на
-`https://localhost:8443`. Для отдельной UI-разработки по-прежнему доступен
+`http://localhost:8000`. Для отдельной UI-разработки по-прежнему доступен
 Next.js dev server:
 
 ```bash

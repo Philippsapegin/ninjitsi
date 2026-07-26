@@ -136,7 +136,47 @@ function Initialize-Jitsi {
     $LocalDefaults | Add-Content -Encoding UTF8 -LiteralPath $EnvPath
   }
 
+  $EnvContent = Get-Content -Raw -LiteralPath $EnvPath
+  $UpdatedEnvContent = $EnvContent.Replace(
+    "PUBLIC_URL=http://localhost:8000",
+    "PUBLIC_URL=https://localhost:8443"
+  )
+
+  if ($UpdatedEnvContent -ne $EnvContent) {
+    Set-Content -Encoding UTF8 -NoNewline -LiteralPath $EnvPath -Value $UpdatedEnvContent
+  }
+
   Write-Host "Jitsi is prepared in $JitsiRoot"
+}
+
+function Set-LocalJitsiBrowserConfig {
+  $ConfigPath = Join-Path $JitsiRoot "config\web\config.js"
+
+  for ($Attempt = 0; $Attempt -lt 15; $Attempt += 1) {
+    if (Test-Path -LiteralPath $ConfigPath) {
+      $ConfigContent = Get-Content -Raw -LiteralPath $ConfigPath
+
+      if ($ConfigContent -match "config\.bosh") {
+        $UpdatedConfig = [regex]::Replace(
+          $ConfigContent,
+          "(?m)^config\.bosh = .*$",
+          "config.bosh = 'http://localhost:8000/http-bind';"
+        )
+        $UpdatedConfig = [regex]::Replace(
+          $UpdatedConfig,
+          "(?m)^config\.websocket = .*$",
+          "config.websocket = 'ws://localhost:8000/xmpp-websocket';"
+        )
+        Set-Content -Encoding UTF8 -NoNewline -LiteralPath $ConfigPath -Value $UpdatedConfig
+        Write-Host "Jitsi browser signaling uses local HTTP endpoints."
+        return
+      }
+    }
+
+    Start-Sleep -Seconds 2
+  }
+
+  throw "Jitsi config.js was not generated within 30 seconds."
 }
 
 if ($Action -eq "prepare") {
@@ -163,6 +203,10 @@ try {
   Pop-Location
 }
 
+if ($Action -eq "up") {
+  Set-LocalJitsiBrowserConfig
+}
+
 Push-Location $ProjectRoot
 try {
   if ($Action -eq "up") {
@@ -181,5 +225,5 @@ try {
 if ($Action -eq "up") {
   Write-Host ""
   Write-Host "Ninjitsi: http://localhost:3000"
-  Write-Host "Jitsi:    https://localhost:8443"
+  Write-Host "Jitsi:    http://localhost:8000"
 }

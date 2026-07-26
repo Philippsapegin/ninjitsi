@@ -26,7 +26,7 @@ const jitsiUrlArgument = process.argv
 const jitsiUrl = (
   jitsiUrlArgument?.slice("--jitsi-url=".length) ??
   process.env.JITSI_URL ??
-  "https://localhost:8443"
+  "http://localhost:8000"
 )
   .trim()
   .replace(/\/+$/, "");

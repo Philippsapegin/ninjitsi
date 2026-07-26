@@ -5,7 +5,7 @@ services:
     build:
       context: .
     environment:
-      JITSI_URL: ${JITSI_URL:-https://localhost:8443}
+      JITSI_URL: ${JITSI_URL:-http://localhost:8000}
     ports:
       - "${NINJITSI_PORT:-3000}:80"
     restart: unless-stopped
