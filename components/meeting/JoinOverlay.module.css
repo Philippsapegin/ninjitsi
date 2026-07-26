@@ -44,7 +44,7 @@
   width: 470px;
   padding: 32px;
   background: rgba(17, 20, 25, 0.93);
-  border: 1px solid var(--line-strong);
+  border: 0;
   border-radius: 26px;
   box-shadow: 0 40px 120px rgba(0, 0, 0, 0.58);
   backdrop-filter: blur(20px);
@@ -58,7 +58,7 @@
   gap: 8px;
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 8px;
   font-size: 11px;
   font-weight: 650;
@@ -122,16 +122,13 @@
   outline: none;
   color: var(--text);
   background: #0b0e12;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 13px;
-  transition:
-    border-color 150ms ease,
-    box-shadow 150ms ease;
+  transition: background 150ms ease;
 }
 
 .field input:focus {
-  border-color: rgba(216, 255, 99, 0.55);
-  box-shadow: 0 0 0 3px rgba(216, 255, 99, 0.08);
+  background: #11161a;
 }
 
 .field input::placeholder {
@@ -166,7 +163,7 @@
   align-items: center;
   gap: 11px;
   background: var(--surface-soft);
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 13px;
   cursor: pointer;
   text-align: left;
@@ -199,7 +196,7 @@
   padding: 11px 12px;
   color: #ffaaa4;
   background: rgba(255, 107, 98, 0.09);
-  border: 1px solid rgba(255, 107, 98, 0.18);
+  border: 0;
   border-radius: 10px;
   font-size: 11px;
   line-height: 1.4;

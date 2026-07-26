@@ -1,8 +1,9 @@
 "use client";
 
 import { ChangeEvent, useEffect, useRef, useState } from "react";
-import { ImagePlus, Plus, UserRound } from "lucide-react";
+import { ImagePlus, Plus, UserRound, X } from "lucide-react";
 import {
+  deleteClientProfile,
   prepareAvatar,
   profileToDraft,
   readClientProfiles,
@@ -96,6 +97,23 @@ export function ProfileEditor({
     onChange(profileToDraft(profile));
   }
 
+  function deleteSelectedProfile(profile: ClientProfile) {
+    const nextSelected = deleteClientProfile(profile.id);
+    const nextProfiles = readClientProfiles();
+
+    setAvatarError("");
+    setProfiles(nextProfiles);
+    onChange(
+      nextSelected
+        ? profileToDraft(nextSelected)
+        : {
+            avatarDataUrl: "",
+            displayName: "",
+            profileId: "",
+          },
+    );
+  }
+
   return (
     <section className={styles.editor}>
       <div className={styles.heading}>
@@ -117,24 +135,38 @@ export function ProfileEditor({
 
       {profiles.length > 0 && (
         <div aria-label="Сохранённые профили" className={styles.saved}>
-          {profiles.map((profile) => (
-            <button
-              aria-label={`Выбрать профиль ${profile.displayName}`}
-              aria-pressed={profile.id === value.profileId}
-              className={
-                profile.id === value.profileId ? styles.selected : ""
-              }
-              key={profile.id}
-              onClick={() => selectProfile(profile)}
-              title={profile.displayName}
-              type="button"
-            >
-              <ProfileAvatar
-                avatarDataUrl={profile.avatarDataUrl}
-                displayName={profile.displayName}
-              />
-            </button>
-          ))}
+          {profiles.map((profile) => {
+            const isSelected = profile.id === value.profileId;
+
+            return (
+              <span className={styles.savedProfile} key={profile.id}>
+                <button
+                  aria-label={`Выбрать профиль ${profile.displayName}`}
+                  aria-pressed={isSelected}
+                  className={isSelected ? styles.selected : ""}
+                  onClick={() => selectProfile(profile)}
+                  title={profile.displayName}
+                  type="button"
+                >
+                  <ProfileAvatar
+                    avatarDataUrl={profile.avatarDataUrl}
+                    displayName={profile.displayName}
+                  />
+                </button>
+                {isSelected && (
+                  <button
+                    aria-label={`Удалить профиль ${profile.displayName}`}
+                    className={styles.deleteProfile}
+                    onClick={() => deleteSelectedProfile(profile)}
+                    title={`Удалить профиль ${profile.displayName}`}
+                    type="button"
+                  >
+                    <X size={8} strokeWidth={3} />
+                  </button>
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
 

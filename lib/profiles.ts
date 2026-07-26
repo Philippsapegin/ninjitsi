@@ -112,6 +112,26 @@ export function saveClientProfile(draft: ProfileDraft): ClientProfile {
   return profile;
 }
 
+export function deleteClientProfile(profileId: string): ClientProfile | null {
+  if (!canUseStorage()) {
+    return null;
+  }
+
+  const nextProfiles = readClientProfiles().filter(
+    (profile) => profile.id !== profileId,
+  );
+  const nextSelected = nextProfiles[0] ?? null;
+
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(nextProfiles));
+  if (nextSelected) {
+    localStorage.setItem(SELECTED_PROFILE_KEY, nextSelected.id);
+  } else {
+    localStorage.removeItem(SELECTED_PROFILE_KEY);
+  }
+
+  return nextSelected;
+}
+
 export function profileToDraft(profile: ClientProfile): ProfileDraft {
   return {
     avatarDataUrl: profile.avatarDataUrl,

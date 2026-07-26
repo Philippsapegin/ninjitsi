@@ -76,6 +76,15 @@ const demoNames = [
 const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
 const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
 const ATTACHMENT_CHUNK_SIZE = 12_000;
+const MAX_RECONNECT_DELAY = 15_000;
+const RECOVERABLE_CONFERENCE_ERRORS = new Set([
+  "conference.connectionError",
+  "conference.focusDisconnected",
+  "conference.focusLeft",
+  "conference.iceFailed",
+  "conference.offerAnswerFailed",
+  "conference.videobridgeNotAvailable",
+]);
 export const MAX_CHAT_ATTACHMENT_SIZE = 2 * 1024 * 1024;
 
 type AttachmentWireMessage =
@@ -340,6 +349,16 @@ export function useJitsiConference(roomName: string): ConferenceController {
     new Map<string, { participantId: string; startedAt: number }>(),
   );
   const pingIntervalRef = useRef<number | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectInProgressRef = useRef(false);
+  const recoveringSessionRef = useRef(false);
+  const hasJoinedRef = useRef(false);
+  const intentionalLeaveRef = useRef(false);
+  const lastJoinOptionsRef = useRef<JoinOptions | null>(null);
+  const joinRef = useRef<((options: JoinOptions) => Promise<void>) | null>(
+    null,
+  );
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -519,18 +538,83 @@ export function useJitsiConference(roomName: string): ConferenceController {
     connection?.disconnect();
   }, [setMediaBusy]);
 
+  const scheduleFullReconnect = useCallback(
+    async () => {
+      if (
+        intentionalLeaveRef.current ||
+        reconnectInProgressRef.current ||
+        !lastJoinOptionsRef.current
+      ) {
+        return;
+      }
+
+      const currentTracks = conferenceRef.current?.getLocalTracks() ?? [];
+      const currentAudio = currentTracks.find(
+        (track) => track.getType() === "audio",
+      );
+      const currentCamera = currentTracks.find(
+        (track) =>
+          track.getType() === "video" &&
+          track.getVideoType?.() !== "desktop",
+      );
+
+      if (currentTracks.length > 0) {
+        lastJoinOptionsRef.current = {
+          ...lastJoinOptionsRef.current,
+          startAudioMuted: !currentAudio || currentAudio.isMuted(),
+          startVideoMuted: !currentCamera || currentCamera.isMuted(),
+        };
+      }
+      reconnectInProgressRef.current = true;
+      recoveringSessionRef.current = true;
+      setError(null);
+      setStatus("reconnecting");
+      await teardown();
+
+      if (intentionalLeaveRef.current) {
+        reconnectInProgressRef.current = false;
+        return;
+      }
+
+      const delay = Math.min(
+        MAX_RECONNECT_DELAY,
+        1_000 * 2 ** Math.min(reconnectAttemptRef.current, 4),
+      );
+      const options = lastJoinOptionsRef.current;
+
+      reconnectAttemptRef.current += 1;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        reconnectInProgressRef.current = false;
+
+        if (!intentionalLeaveRef.current && options) {
+          void joinRef.current?.(options);
+        }
+      }, delay);
+    },
+    [teardown],
+  );
+
   const join = useCallback(
     async (options: JoinOptions) => {
+      const isRecovery = recoveringSessionRef.current;
+
+      lastJoinOptionsRef.current = options;
+      intentionalLeaveRef.current = false;
       setError(null);
       localNameRef.current = options.displayName;
       localAvatarRef.current = options.avatarDataUrl;
       disposedRef.current = false;
-      setChatMessages([]);
-      setConnectionStats({});
-      incomingAttachmentsRef.current.clear();
+      if (!isRecovery) {
+        hasJoinedRef.current = false;
+        reconnectAttemptRef.current = 0;
+        setChatMessages([]);
+        setConnectionStats({});
+        incomingAttachmentsRef.current.clear();
+      }
 
       if (isDemo) {
-        setStatus("loading");
+        setStatus(isRecovery ? "reconnecting" : "loading");
         await new Promise((resolve) => window.setTimeout(resolve, 420));
         const demoParticipants = createDemoParticipants(
           options.displayName,
@@ -546,7 +630,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         return;
       }
 
-      setStatus("loading");
+      setStatus(isRecovery ? "reconnecting" : "loading");
       let discardInitialTracks: (() => void) | undefined;
 
       try {
@@ -654,7 +738,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         const connectionEvents = library.events.connection;
 
         connectionRef.current = connection;
-        setStatus("connecting");
+        setStatus(isRecovery ? "reconnecting" : "connecting");
 
         connection.addEventListener(
           connectionEvents.CONNECTION_ESTABLISHED,
@@ -987,6 +1071,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
               setStatus("joined"),
             );
             conference.on(conferenceEvents.CONFERENCE_JOINED, async () => {
+              hasJoinedRef.current = true;
+              reconnectAttemptRef.current = 0;
+              reconnectInProgressRef.current = false;
+              recoveringSessionRef.current = false;
+              setError(null);
               setStatus("joined");
               syncParticipants();
               window.setTimeout(sendPingRound, 1_000);
@@ -1007,8 +1096,24 @@ export function useJitsiConference(roomName: string): ConferenceController {
             conference.on(
               conferenceEvents.CONFERENCE_FAILED,
               async (reason) => {
+                if (
+                  disposedRef.current ||
+                  conferenceRef.current !== conference
+                ) {
+                  return;
+                }
+
                 const isPasswordError =
                   reason === "conference.passwordRequired";
+                const isRecoverable =
+                  hasJoinedRef.current &&
+                  typeof reason === "string" &&
+                  RECOVERABLE_CONFERENCE_ERRORS.has(reason);
+
+                if (isRecoverable) {
+                  await scheduleFullReconnect();
+                  return;
+                }
 
                 setError(
                   isPasswordError
@@ -1017,6 +1122,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
                         typeof reason === "string" ? `: ${reason}` : ""
                       }`,
                 );
+                recoveringSessionRef.current = false;
                 setStatus("failed");
                 await teardown();
               },
@@ -1076,12 +1182,26 @@ export function useJitsiConference(roomName: string): ConferenceController {
         connection.addEventListener(
           connectionEvents.CONNECTION_FAILED,
           async (...eventArguments) => {
+            if (
+              disposedRef.current ||
+              connectionRef.current !== connection
+            ) {
+              return;
+            }
+
+            if (hasJoinedRef.current) {
+              discardInitialTracks?.();
+              await scheduleFullReconnect();
+              return;
+            }
+
             const reason = eventArguments
               .filter((value) => typeof value === "string")
               .join(": ");
 
             setError(`Jitsi-сервер отклонил соединение${reason ? `: ${reason}` : ""}`);
             setStatus("failed");
+            recoveringSessionRef.current = false;
             discardInitialTracks?.();
             await teardown();
           },
@@ -1090,7 +1210,17 @@ export function useJitsiConference(roomName: string): ConferenceController {
         connection.addEventListener(
           connectionEvents.CONNECTION_DISCONNECTED,
           () => {
-            if (!disposedRef.current) {
+            if (
+              disposedRef.current ||
+              connectionRef.current !== connection
+            ) {
+              return;
+            }
+
+            if (hasJoinedRef.current) {
+              void scheduleFullReconnect();
+            } else {
+              recoveringSessionRef.current = false;
               setStatus("failed");
               setError("Соединение с Jitsi-сервером прервано");
             }
@@ -1100,11 +1230,21 @@ export function useJitsiConference(roomName: string): ConferenceController {
         connection.connect();
       } catch (caughtError) {
         discardInitialTracks?.();
+
+        if (
+          recoveringSessionRef.current &&
+          !intentionalLeaveRef.current
+        ) {
+          await scheduleFullReconnect();
+          return;
+        }
+
         setError(
           caughtError instanceof Error
             ? caughtError.message
             : "Не удалось запустить видеовстречу",
         );
+        recoveringSessionRef.current = false;
         setStatus("failed");
         await teardown();
       }
@@ -1113,12 +1253,17 @@ export function useJitsiConference(roomName: string): ConferenceController {
       isDemo,
       roomName,
       scheduleParticipantSync,
+      scheduleFullReconnect,
       serverUrl,
       setMediaBusy,
       syncParticipants,
       teardown,
     ],
   );
+
+  useEffect(() => {
+    joinRef.current = join;
+  }, [join]);
 
   const toggleAudio = useCallback(async () => {
     if (isDemo) {
@@ -1655,6 +1800,15 @@ export function useJitsiConference(roomName: string): ConferenceController {
   );
 
   const leave = useCallback(async () => {
+    intentionalLeaveRef.current = true;
+    recoveringSessionRef.current = false;
+    reconnectInProgressRef.current = false;
+    hasJoinedRef.current = false;
+    lastJoinOptionsRef.current = null;
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (!isDemo) {
       await teardown();
     }
@@ -1668,6 +1822,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   useEffect(
     () => () => {
+      intentionalLeaveRef.current = true;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (!isDemo) {
         void teardown();
       }

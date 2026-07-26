@@ -63,7 +63,10 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     status: "checking",
     error: null,
   });
-  const timer = useCallTimer(conference.status === "joined");
+  const callIsActive =
+    conference.status === "joined" ||
+    conference.status === "reconnecting";
+  const timer = useCallTimer(callIsActive);
   const showJoinOverlay =
     conference.status === "idle" ||
     conference.status === "loading" ||
@@ -77,6 +80,53 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     )
       ? focusedParticipantId
       : null;
+
+  useEffect(() => {
+    if (!callIsActive || !("wakeLock" in navigator)) {
+      return;
+    }
+
+    let cancelled = false;
+    let wakeLock: WakeLockSentinel | null = null;
+
+    const requestWakeLock = async () => {
+      if (
+        cancelled ||
+        document.visibilityState !== "visible" ||
+        wakeLock
+      ) {
+        return;
+      }
+
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener(
+          "release",
+          () => {
+            wakeLock = null;
+          },
+          { once: true },
+        );
+      } catch {
+        // The meeting remains usable if the browser or OS rejects wake lock.
+      }
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void requestWakeLock();
+      }
+    };
+
+    void requestWakeLock();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      void wakeLock?.release();
+      wakeLock = null;
+    };
+  }, [callIsActive]);
 
   useEffect(() => {
     queueMicrotask(() => {

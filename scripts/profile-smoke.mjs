@@ -60,6 +60,29 @@ try {
     throw new Error("Профиль не перешёл из создания комнаты во вход");
   }
 
+  const joinOverlayStrokes = await page
+    .getByRole("dialog", { name: "Вход в комнату" })
+    .evaluate((dialog) => {
+      const elements = Array.from(dialog.querySelectorAll("*")).filter(
+        (element) => element instanceof HTMLElement,
+      );
+
+      return elements
+        .map((element) => ({
+          borderWidth: getComputedStyle(element).borderWidth,
+          label:
+            element.getAttribute("aria-label") ??
+            element.textContent?.trim().slice(0, 60),
+        }))
+        .filter(({ borderWidth }) => borderWidth !== "0px");
+    });
+
+  if (joinOverlayStrokes.length > 0) {
+    throw new Error(
+      `На экране входа остались строуки: ${JSON.stringify(joinOverlayStrokes)}`,
+    );
+  }
+
   await page.getByRole("button", { name: "Войти в комнату" }).click();
   await page
     .getByRole("dialog", { name: "Вход в комнату" })
@@ -100,10 +123,39 @@ try {
     throw new Error("Сохранённый профиль нельзя выбрать повторно");
   }
 
+  const selectedProfileButton = page.getByRole("button", {
+    name: "Выбрать профиль Profile Tester",
+  });
+
+  if (
+    (await selectedProfileButton.evaluate(
+      (button) => getComputedStyle(button).outlineColor,
+    )) === "rgba(0, 0, 0, 0)"
+  ) {
+    throw new Error(
+      `На экране входа остались строуки либо потерян зелёный выбор профиля: ${JSON.stringify(joinOverlayStrokes)}`,
+    );
+  }
+
+  await page
+    .getByRole("button", { name: "Удалить профиль Profile Tester" })
+    .click();
+
+  if (
+    (await page.getByLabel("Ваше имя").inputValue()) !== "" ||
+    (await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("ninjitsi.profiles") ?? "[]"),
+    )).length !== 0
+  ) {
+    throw new Error("Крестик не удалил выбранный профиль");
+  }
+
   console.log(
     JSON.stringify(
       {
         avatar: "uploaded and restored",
+        deletion: "selected profile removed",
+        joinOverlayStrokes: "removed",
         profileCount: storedProfiles.length,
         selection: "restored",
         status: "passed",

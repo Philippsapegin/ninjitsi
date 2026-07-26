@@ -20,6 +20,13 @@ if (!executablePath) {
 
 const baseUrl = process.env.NINJITSI_BASE_URL ?? "http://localhost:3000";
 const jitsiUrl = process.env.NINJITSI_JITSI_URL;
+const stabilityMs = Math.max(
+  0,
+  Number.parseInt(process.env.NINJITSI_STABILITY_MS ?? "0", 10) || 0,
+);
+const forceJvb = process.env.NINJITSI_FORCE_JVB === "1";
+const allowTransportRecoveryErrors =
+  process.env.NINJITSI_ALLOW_TRANSPORT_RECOVERY_ERRORS === "1";
 
 if (!jitsiUrl) {
   throw new Error(
@@ -66,6 +73,13 @@ const knownJitsiWarnings = [
   /\[util:XMLUtils\].*findAll error/,
   /No SSRC lines found in remote SDP/,
   /removeRemoteStreamsOnLeave error: ClearedQueueError/,
+  ...(allowTransportRecoveryErrors
+    ? [
+        /\[rtc:BridgeChannel\].*Channel closed/,
+        /WebSocket connection .*Data frame received after close/,
+        /Cannot read properties of undefined \(reading 'payloads'\)/,
+      ]
+    : []),
 ];
 
 page.on("console", (message) => {
@@ -88,9 +102,15 @@ try {
       return originalGetUserMedia(constraints);
     };
   });
-  await page.addInitScript((serverUrl) => {
-    window.__NINJITSI_CONFIG__ = { jitsiUrl: serverUrl };
-  }, jitsiUrl);
+  await page.addInitScript(
+    ({ forceJvbForTesting, serverUrl }) => {
+      window.__NINJITSI_CONFIG__ = {
+        forceJvbForTesting,
+        jitsiUrl: serverUrl,
+      };
+    },
+    { forceJvbForTesting: forceJvb, serverUrl: jitsiUrl },
+  );
   await page.goto(`${baseUrl}/room/${roomName}`, {
     waitUntil: "networkidle",
   });
@@ -168,9 +188,15 @@ try {
   observerPage.on("pageerror", (pageError) => {
     browserErrors.push(`[observer] ${pageError.message}`);
   });
-  await observerPage.addInitScript((serverUrl) => {
-    window.__NINJITSI_CONFIG__ = { jitsiUrl: serverUrl };
-  }, jitsiUrl);
+  await observerPage.addInitScript(
+    ({ forceJvbForTesting, serverUrl }) => {
+      window.__NINJITSI_CONFIG__ = {
+        forceJvbForTesting,
+        jitsiUrl: serverUrl,
+      };
+    },
+    { forceJvbForTesting: forceJvb, serverUrl: jitsiUrl },
+  );
   await observerPage.goto(`${baseUrl}/room/${roomName}`, {
     waitUntil: "networkidle",
   });
@@ -387,6 +413,23 @@ try {
   await remoteTile
     .getByText("экран", { exact: true })
     .waitFor({ state: "hidden", timeout: 30_000 });
+
+  if (stabilityMs > 0) {
+    await page.waitForTimeout(stabilityMs);
+    await page
+      .getByRole("dialog", { name: "Вход в комнату" })
+      .waitFor({ state: "hidden" });
+    await observerPage
+      .getByRole("dialog", { name: "Вход в комнату" })
+      .waitFor({ state: "hidden" });
+    await remoteTile.locator("video").waitFor();
+    await page
+      .locator("[data-video-tile]")
+      .filter({ hasText: "Remote Observer" })
+      .locator("video")
+      .waitFor();
+  }
+
   await observerPage.close();
 
   const unexpectedBrowserErrors = browserErrors.filter(
@@ -427,9 +470,15 @@ try {
       return originalGetUserMedia(constraints);
     };
   });
-  await recoveryPage.addInitScript((serverUrl) => {
-    window.__NINJITSI_CONFIG__ = { jitsiUrl: serverUrl };
-  }, jitsiUrl);
+  await recoveryPage.addInitScript(
+    ({ forceJvbForTesting, serverUrl }) => {
+      window.__NINJITSI_CONFIG__ = {
+        forceJvbForTesting,
+        jitsiUrl: serverUrl,
+      };
+    },
+    { forceJvbForTesting: forceJvb, serverUrl: jitsiUrl },
+  );
   await recoveryPage.goto(`${baseUrl}/room/${recoveryRoomName}`, {
     waitUntil: "networkidle",
   });
@@ -480,11 +529,17 @@ try {
           remotePropagation: "passed",
           recoveryAfterInitialDenial: "passed",
           screenShare: "start/stop passed",
+          stability:
+            stabilityMs > 0 ? `${stabilityMs} ms passed` : "not requested",
           stageMode: "enter/exit passed",
         },
         roomName,
         status: "joined",
         tileCount: await page.locator("[data-video-tile]").count(),
+        transport: forceJvb ? "JVB forced" : "deployment default",
+        transportRecoveryErrors: allowTransportRecoveryErrors
+          ? "expected during chaos test"
+          : "strict",
       },
       null,
       2,

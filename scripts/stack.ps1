@@ -31,6 +31,40 @@ function New-Secret {
   return ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
 }
 
+function Get-JvbAdvertiseIps {
+  if ($env:NINJITSI_JVB_ADVERTISE_IPS) {
+    return $env:NINJITSI_JVB_ADVERTISE_IPS.Trim()
+  }
+
+  $Addresses = Get-NetIPInterface `
+      -AddressFamily IPv4 `
+      -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.ConnectionState -eq "Connected" -and
+      $_.InterfaceAlias -notmatch "(?i)docker|hyper-v|loopback|vethernet|wsl"
+    } |
+    Sort-Object InterfaceMetric |
+    ForEach-Object {
+      Get-NetIPAddress `
+        -InterfaceIndex $_.InterfaceIndex `
+        -AddressFamily IPv4 `
+        -ErrorAction SilentlyContinue
+    } |
+    Where-Object {
+      $_.AddressState -eq "Preferred" -and
+      $_.IPAddress -notlike "127.*" -and
+      $_.IPAddress -notlike "169.254.*"
+    } |
+    Select-Object -ExpandProperty IPAddress -Unique
+
+  if (-not $Addresses) {
+    Write-Warning "No active physical IPv4 address was found. Set NINJITSI_JVB_ADVERTISE_IPS manually."
+    return "127.0.0.1"
+  }
+
+  return ($Addresses -join ",")
+}
+
 function Initialize-Docker {
   docker info *> $null
 
@@ -67,6 +101,7 @@ function Initialize-Docker {
 
 function Initialize-Jitsi {
   New-Item -ItemType Directory -Force -Path $LocalRoot | Out-Null
+  $JvbAdvertiseIps = Get-JvbAdvertiseIps
 
   $PreparedVersion = if (Test-Path $ReleaseMarker) {
     (Get-Content -Raw $ReleaseMarker).Trim()
@@ -118,8 +153,8 @@ function Initialize-Jitsi {
       "HTTPS_PORT=8443",
       "TZ=Asia/Yekaterinburg",
       "PUBLIC_URL=https://localhost:8443",
-      "JVB_ADVERTISE_IPS=127.0.0.1",
-      "DOCKER_HOST_ADDRESS=127.0.0.1",
+      "JVB_ADVERTISE_IPS=$JvbAdvertiseIps",
+      "DOCKER_HOST_ADDRESS=$($JvbAdvertiseIps.Split(',')[0])",
       "ENABLE_AUTH=0",
       "ENABLE_GUESTS=1",
       "ENABLE_LETSENCRYPT=0",
@@ -141,12 +176,22 @@ function Initialize-Jitsi {
     "PUBLIC_URL=http://localhost:8000",
     "PUBLIC_URL=https://localhost:8443"
   )
+  $UpdatedEnvContent = [regex]::Replace(
+    $UpdatedEnvContent,
+    "(?m)^JVB_ADVERTISE_IPS=.*$",
+    "JVB_ADVERTISE_IPS=$JvbAdvertiseIps"
+  )
+  $UpdatedEnvContent = [regex]::Replace(
+    $UpdatedEnvContent,
+    "(?m)^DOCKER_HOST_ADDRESS=.*$",
+    "DOCKER_HOST_ADDRESS=$($JvbAdvertiseIps.Split(',')[0])"
+  )
 
   if ($UpdatedEnvContent -ne $EnvContent) {
     Set-Content -Encoding UTF8 -NoNewline -LiteralPath $EnvPath -Value $UpdatedEnvContent
   }
 
-  Write-Host "Jitsi is prepared in $JitsiRoot"
+  Write-Host "Jitsi is prepared in $JitsiRoot (media address: $JvbAdvertiseIps)"
 }
 
 function Set-LocalJitsiBrowserConfig {

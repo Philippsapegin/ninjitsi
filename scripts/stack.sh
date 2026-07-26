@@ -14,8 +14,36 @@ secret() {
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
 }
 
+detect_jvb_advertise_ips() {
+  if [ -n "${NINJITSI_JVB_ADVERTISE_IPS:-}" ]; then
+    printf '%s' "$NINJITSI_JVB_ADVERTISE_IPS"
+    return
+  fi
+
+  detected_ip=$(
+    ip route get 1.1.1.1 2>/dev/null |
+      awk '{
+        for (index = 1; index <= NF; index += 1) {
+          if ($index == "src") {
+            print $(index + 1)
+            exit
+          }
+        }
+      }'
+  )
+
+  if [ -z "$detected_ip" ]; then
+    echo "Не найден активный IPv4-адрес. Задайте NINJITSI_JVB_ADVERTISE_IPS вручную." >&2
+    detected_ip=127.0.0.1
+  fi
+
+  printf '%s' "$detected_ip"
+}
+
 prepare_jitsi() {
   mkdir -p "$local_root"
+  jvb_advertise_ips=$(detect_jvb_advertise_ips)
+  docker_host_address=${jvb_advertise_ips%%,*}
   prepared_version=""
 
   if [ -f "$release_marker" ]; then
@@ -54,8 +82,8 @@ HTTP_PORT=8000
 HTTPS_PORT=8443
 TZ=Etc/UTC
 PUBLIC_URL=https://localhost:8443
-JVB_ADVERTISE_IPS=127.0.0.1
-DOCKER_HOST_ADDRESS=127.0.0.1
+JVB_ADVERTISE_IPS=$jvb_advertise_ips
+DOCKER_HOST_ADDRESS=$docker_host_address
 ENABLE_AUTH=0
 ENABLE_GUESTS=1
 ENABLE_LETSENCRYPT=0
@@ -77,7 +105,13 @@ EOF
     rm -f "$jitsi_root/.env.bak"
   fi
 
-  echo "Jitsi подготовлен в $jitsi_root"
+  sed -i.bak \
+    -e "s|^JVB_ADVERTISE_IPS=.*$|JVB_ADVERTISE_IPS=$jvb_advertise_ips|" \
+    -e "s|^DOCKER_HOST_ADDRESS=.*$|DOCKER_HOST_ADDRESS=$docker_host_address|" \
+    "$jitsi_root/.env"
+  rm -f "$jitsi_root/.env.bak"
+
+  echo "Jitsi подготовлен в $jitsi_root (media address: $jvb_advertise_ips)"
 }
 
 set_local_jitsi_browser_config() {

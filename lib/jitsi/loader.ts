@@ -102,6 +102,17 @@ export function loadJitsiRuntime(
     const config = {
       ...runtime.config,
       bosh,
+      ...(window.__NINJITSI_CONFIG__?.forceJvbForTesting
+        ? {
+            p2p: {
+              ...(typeof runtime.config.p2p === "object" &&
+              runtime.config.p2p
+                ? runtime.config.p2p
+                : {}),
+              enabled: false,
+            },
+          }
+        : {}),
       websocket,
       serviceUrl: appendRoom(serviceUrl, roomName),
     };
