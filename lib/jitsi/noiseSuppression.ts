@@ -1,4 +1,5 @@
 import type { JitsiTrackEffect, JitsiTrackLike } from "./types";
+import { getStoredLocale, localize } from "@/lib/i18n";
 
 type AudioContextConstructor = typeof AudioContext;
 
@@ -44,7 +45,13 @@ export class JitsiNoiseSuppressionEffect implements JitsiTrackEffect {
     const AudioContextClass = getAudioContextConstructor();
 
     if (!AudioContextClass) {
-      throw new Error("AudioWorklet не поддерживается браузером");
+      throw new Error(
+        localize(
+          getStoredLocale(),
+          "AudioWorklet is not supported by this browser.",
+          "AudioWorklet не поддерживается браузером",
+        ),
+      );
     }
 
     this.context = new AudioContextClass();
@@ -58,7 +65,13 @@ export class JitsiNoiseSuppressionEffect implements JitsiTrackEffect {
     const originalTrack = stream.getAudioTracks()[0];
 
     if (!originalTrack) {
-      throw new Error("У аудиопотока нет дорожки");
+      throw new Error(
+        localize(
+          getStoredLocale(),
+          "The audio stream has no track.",
+          "У аудиопотока нет дорожки",
+        ),
+      );
     }
 
     this.originalTrack = originalTrack;

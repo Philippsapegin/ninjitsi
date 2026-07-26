@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Script from "next/script";
+import { I18nProvider } from "@/lib/i18n";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ninjitsi — спокойные видеовстречи",
-  description: "Desktop-first клиент для видеовстреч на базе Jitsi.",
+  title: "Ninjitsi — simple Jitsi meetings",
+  description: "A desktop-first video meeting client built on Jitsi.",
 };
 
 export default function RootLayout({
@@ -13,10 +14,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ru">
+    <html lang="en">
       <body>
         <Script src="/runtime-config.js" strategy="beforeInteractive" />
-        {children}
+        <I18nProvider>{children}</I18nProvider>
       </body>
     </html>
   );

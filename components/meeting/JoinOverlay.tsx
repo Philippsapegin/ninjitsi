@@ -16,6 +16,7 @@ import { Brand } from "@/components/brand/Brand";
 import { ProfileEditor } from "@/components/profile/ProfileEditor";
 import { saveClientProfile } from "@/lib/profiles";
 import type { ProfileDraft } from "@/lib/profiles";
+import { useI18n } from "@/lib/i18n";
 import styles from "./JoinOverlay.module.css";
 
 interface JoinOverlayProps {
@@ -35,6 +36,7 @@ export function JoinOverlay({
   roomName,
   status,
 }: JoinOverlayProps) {
+  const { tr } = useI18n();
   const [profile, setProfile] = useState<ProfileDraft>({
     avatarDataUrl: initialDetails.avatarDataUrl,
     displayName: initialDetails.displayName,
@@ -70,7 +72,7 @@ export function JoinOverlay({
 
   return (
     <div
-      aria-label="Вход в комнату"
+      aria-label={tr("Join room", "Вход в комнату")}
       className={styles.overlay}
       role="dialog"
     >
@@ -84,18 +86,30 @@ export function JoinOverlay({
           <span />
           {roomName}
         </div>
-        <h1>{isBusy ? "Подключаемся" : "Можно входить"}</h1>
+        <h1>
+          {isBusy
+            ? tr("Connecting", "Подключаемся")
+            : tr("Ready to join", "Можно входить")}
+        </h1>
         <p>
           {isBusy
-            ? "Запрашиваем устройства и собираем видеокомнату."
-            : "Представьтесь и проверьте, с чем хотите войти."}
+            ? tr(
+                "Requesting devices and preparing the meeting.",
+                "Запрашиваем устройства и собираем видеокомнату.",
+              )
+            : tr(
+                "Introduce yourself and check your devices.",
+                "Представьтесь и проверьте, с чем хотите войти.",
+              )}
         </p>
 
         {isBusy ? (
           <div className={styles.loading}>
             <LoaderCircle size={27} />
             <span>
-              {isDemo ? "Готовим демонстрацию" : "Связываемся с Jitsi"}
+              {isDemo
+                ? tr("Preparing the demo", "Готовим демонстрацию")
+                : tr("Connecting to Jitsi", "Связываемся с Jitsi")}
             </span>
           </div>
         ) : (
@@ -104,15 +118,18 @@ export function JoinOverlay({
 
             <label className={styles.field}>
               <span className={styles.optionalLabel}>
-                Пароль комнаты
-                <em>если установлен</em>
+                {tr("Room password", "Пароль комнаты")}
+                <em>{tr("if set", "если установлен")}</em>
               </span>
               <div className={styles.passwordField}>
                 <LockKeyhole size={16} />
                 <input
                   autoComplete="off"
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Можно оставить пустым"
+                  placeholder={tr(
+                    "You can leave this empty",
+                    "Можно оставить пустым",
+                  )}
                   type="password"
                   value={password}
                 />
@@ -127,8 +144,12 @@ export function JoinOverlay({
               >
                 {startAudioMuted ? <MicOff size={18} /> : <Mic size={18} />}
                 <span>
-                  Микрофон
-                  <em>{startAudioMuted ? "выключен" : "включён"}</em>
+                  {tr("Microphone", "Микрофон")}
+                  <em>
+                    {startAudioMuted
+                      ? tr("off", "выключен")
+                      : tr("on", "включён")}
+                  </em>
                 </span>
               </button>
               <button
@@ -142,8 +163,12 @@ export function JoinOverlay({
                   <Camera size={18} />
                 )}
                 <span>
-                  Камера
-                  <em>{startVideoMuted ? "выключена" : "включена"}</em>
+                  {tr("Camera", "Камера")}
+                  <em>
+                    {startVideoMuted
+                      ? tr("off", "выключена")
+                      : tr("on", "включена")}
+                  </em>
                 </span>
               </button>
             </div>
@@ -155,7 +180,7 @@ export function JoinOverlay({
               disabled={!profile.displayName.trim()}
               type="submit"
             >
-              Войти в комнату
+              {tr("Join room", "Войти в комнату")}
               <ArrowRight size={18} />
             </button>
           </form>
@@ -163,7 +188,10 @@ export function JoinOverlay({
 
         {isDemo && (
           <div className={styles.demoNote}>
-            Демонстрационный режим: адрес Jitsi-сервера пока не задан.
+            {tr(
+              "Demo mode: no Jitsi server URL is configured.",
+              "Демонстрационный режим: адрес Jitsi-сервера пока не задан.",
+            )}
           </div>
         )}
       </div>

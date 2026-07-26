@@ -1,3 +1,5 @@
+import { getStoredLocale, localize } from "./i18n";
+
 export interface ClientProfile {
   avatarDataUrl: string;
   displayName: string;
@@ -90,7 +92,13 @@ export function saveClientProfile(draft: ProfileDraft): ClientProfile {
   const displayName = draft.displayName.trim();
 
   if (!displayName) {
-    throw new Error("Укажите имя профиля");
+    throw new Error(
+      localize(
+        getStoredLocale(),
+        "Enter a profile name",
+        "Укажите имя профиля",
+      ),
+    );
   }
 
   const profiles = readClientProfiles();
@@ -142,11 +150,19 @@ export function profileToDraft(profile: ClientProfile): ProfileDraft {
 
 export async function prepareAvatar(file: File): Promise<string> {
   if (!file.type.startsWith("image/")) {
-    throw new Error("Выберите изображение");
+    throw new Error(
+      localize(getStoredLocale(), "Choose an image", "Выберите изображение"),
+    );
   }
 
   if (file.size > MAX_AVATAR_FILE_SIZE) {
-    throw new Error("Файл аватарки должен быть меньше 8 МБ");
+    throw new Error(
+      localize(
+        getStoredLocale(),
+        "The avatar file must be smaller than 8 MB",
+        "Файл аватарки должен быть меньше 8 МБ",
+      ),
+    );
   }
 
   const bitmap = await createImageBitmap(file);

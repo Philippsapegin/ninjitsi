@@ -62,6 +62,46 @@ try {
   ]) {
     await page.setViewportSize(viewport);
     await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      localStorage.removeItem("ninjitsi.locale");
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    await page
+      .getByRole("heading", { name: "Couldn't be simpler" })
+      .waitFor();
+
+    const defaultEnglishState = await page.evaluate(() => {
+      const heading = Array.from(document.querySelectorAll("h1")).find(
+        (element) => element.textContent === "Couldn't be simpler",
+      );
+      const englishButton = document.querySelector(
+        'button[aria-label="English"]',
+      );
+
+      return {
+        cyrillicText: document.body.innerText.match(/[А-Яа-яЁё]/)?.[0] ?? null,
+        englishSelected: englishButton?.getAttribute("aria-pressed"),
+        headingHeight: heading?.getBoundingClientRect().height,
+        headingLineHeight: heading
+          ? Number.parseFloat(getComputedStyle(heading).lineHeight)
+          : null,
+      };
+    });
+
+    if (
+      defaultEnglishState.cyrillicText ||
+      defaultEnglishState.englishSelected !== "true" ||
+      defaultEnglishState.headingHeight === undefined ||
+      defaultEnglishState.headingLineHeight === null ||
+      defaultEnglishState.headingHeight >
+        defaultEnglishState.headingLineHeight * 1.1
+    ) {
+      throw new Error(
+        `Default English landing state is invalid: ${JSON.stringify(defaultEnglishState)}`,
+      );
+    }
+
+    await page.getByRole("button", { name: "Русский" }).click();
     await page
       .getByRole("heading", { name: "Проще некуда" })
       .waitFor();
@@ -154,14 +194,32 @@ try {
 
   const { room } = await createResponse.json();
 
+  await page.evaluate(() => {
+    localStorage.setItem("ninjitsi.locale", "en");
+    window.dispatchEvent(new Event("ninjitsi:locale-change"));
+  });
   await page.goto(`${baseUrl}/room/${room.code}`, {
     waitUntil: "networkidle",
   });
-  await page.getByLabel("Ваше имя").fill("Visual Tester");
-  await page.getByRole("button", { name: "Войти в комнату" }).click();
+  await page.getByLabel("Your name").fill("Visual Tester");
+  await page.getByRole("button", { name: "Join room" }).click();
   const videoTiles = page.locator("[data-video-tile]");
 
   await videoTiles.first().waitFor();
+
+  const englishMeetingCyrillic = await page.evaluate(
+    () => document.body.innerText.match(/[А-Яа-яЁё]/)?.[0] ?? null,
+  );
+
+  if (englishMeetingCyrillic) {
+    throw new Error("The English meeting UI contains Russian text.");
+  }
+
+  await page.evaluate(() => {
+    localStorage.setItem("ninjitsi.locale", "ru");
+    window.dispatchEvent(new Event("ninjitsi:locale-change"));
+  });
+  await page.getByRole("button", { name: "Свернуть чат" }).waitFor();
 
   const viewportResults = [];
 
@@ -326,25 +384,34 @@ try {
   await page.waitForTimeout(260);
 
   const remoteVolumeButton = page.getByRole("button", {
-    name: "Громкость участника Лера К.: 100%",
+    name: "Громкость участника Laura K.: 100%",
   });
 
   await remoteVolumeButton.click();
   const volumeSlider = page.getByRole("slider", {
-    name: "Громкость Лера К.",
+    name: "Громкость Laura K.",
   });
+  const defaultVolumeProgress = await volumeSlider.evaluate((element) =>
+    getComputedStyle(element).getPropertyValue("--volume-progress").trim(),
+  );
+
+  if (defaultVolumeProgress !== "50%") {
+    throw new Error(
+      `The volume slider accent progress is invalid: ${defaultVolumeProgress}`,
+    );
+  }
 
   await volumeSlider.fill("200");
   await page
     .getByRole("button", {
-      name: "Громкость участника Лера К.: 200%",
+      name: "Громкость участника Laura K.: 200%",
     })
     .waitFor();
   await page.screenshot({ path: volumeScreenshotPath });
   if (
     (await page
       .getByRole("button", {
-        name: "Вернуть сетку из сцены Лера К.",
+        name: "Вернуть сетку из сцены Laura K.",
       })
       .count()) !== 0
   ) {
@@ -354,7 +421,7 @@ try {
   await page.getByLabel("Выбрать получателей сообщения").click();
   await page
     .getByRole("region", { name: "Получатели сообщения" })
-    .getByRole("button", { name: /Лера К\./ })
+    .getByRole("button", { name: /Laura K\./ })
     .click();
   await page.getByLabel("Сообщение в чат").fill("Личное демо");
   await page
@@ -363,10 +430,74 @@ try {
   await page
     .locator("article")
     .filter({ hasText: "Личное демо" })
-    .getByText("Лично: Лера К.", { exact: true })
+    .getByText("Лично: Laura K.", { exact: true })
     .waitFor();
   await page.getByText("Visual Tester", { exact: true }).last().waitFor();
   await page.screenshot({ path: chatScreenshotPath });
+
+  const transparentPngDataUrl = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+
+    canvas.width = 2;
+    canvas.height = 2;
+    return canvas.toDataURL("image/png");
+  });
+  await page.locator('input[type="file"]').setInputFiles({
+    buffer: Buffer.from(transparentPngDataUrl.split(",")[1], "base64"),
+    mimeType: "image/png",
+    name: "transparent.png",
+  });
+  const imageButton = page.getByRole("button", {
+    name: "Открыть изображение transparent.png",
+  });
+
+  await imageButton.waitFor();
+  if (
+    (await page.locator('a[download="transparent.png"]').count()) !== 0 ||
+    (await imageButton.evaluate(
+      (element) => element.textContent?.includes("transparent.png") ?? false,
+    ))
+  ) {
+    throw new Error("Chat image is still rendered as a captioned download.");
+  }
+
+  await imageButton.click();
+  const imageViewer = page.getByRole("dialog", {
+    name: "Просмотр изображения",
+  });
+  const imagePreviewState = await imageViewer.locator("img").evaluate(
+    async (image) => {
+      if (!(image instanceof HTMLImageElement)) {
+        return null;
+      }
+
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+
+      canvas.width = 1;
+      canvas.height = 1;
+      context?.drawImage(image, 0, 0, 1, 1);
+      const viewer = image.closest('[role="dialog"]');
+
+      return {
+        alpha: context?.getImageData(0, 0, 1, 1).data[3],
+        isDataPng: image.src.startsWith("data:image/png"),
+        viewerPosition: viewer ? getComputedStyle(viewer).position : null,
+      };
+    },
+  );
+
+  if (
+    !imagePreviewState?.isDataPng ||
+    imagePreviewState.alpha !== 0 ||
+    imagePreviewState.viewerPosition !== "fixed"
+  ) {
+    throw new Error(
+      `Transparent PNG preview is invalid: ${JSON.stringify(imagePreviewState)}`,
+    );
+  }
+  await page.getByRole("button", { name: "Закрыть изображение" }).click();
 
   await page
     .getByRole("button", { name: "Показать на сцене Visual Tester" })

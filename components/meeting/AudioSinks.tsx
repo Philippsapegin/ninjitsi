@@ -17,6 +17,7 @@ export function AudioSinks({
         .map((participant) => (
           <AudioTrack
             key={participant.id}
+            participantId={participant.id}
             track={participant.audioTrack!}
             volume={participantVolumes[participant.id] ?? 1}
           />

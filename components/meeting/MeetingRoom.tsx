@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
 import { useCallTimer } from "@/hooks/useCallTimer";
+import { useI18n } from "@/lib/i18n";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
 import { readPendingJoin } from "@/lib/room";
@@ -46,6 +47,7 @@ type RoomGate =
   | { status: "failed"; error: string };
 
 export function MeetingRoom({ roomName }: MeetingRoomProps) {
+  const { locale, tr } = useI18n();
   const conference = useJitsiConference(roomName);
   const roomApiEnabled = useRoomApiEnabled();
   const [joinDetails, setJoinDetails] =
@@ -187,17 +189,25 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           error:
             caughtError instanceof RoomApiError
               ? caughtError.message
-              : "Не удалось проверить комнату на сервере.",
+              : tr(
+                  "Could not verify the room with the server.",
+                  "Не удалось проверить комнату на сервере.",
+                ),
         });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [roomApiEnabled, roomCheckAttempt, roomName]);
+  }, [roomApiEnabled, roomCheckAttempt, roomName, tr]);
 
   const participantLabel = useMemo(() => {
     const count = conference.participants.length;
+
+    if (locale === "en") {
+      return `${count} ${count === 1 ? "participant" : "participants"}`;
+    }
+
     const lastTwoDigits = count % 100;
     const lastDigit = count % 10;
     let noun = "участников";
@@ -211,7 +221,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     }
 
     return `${count} ${noun}`;
-  }, [conference.participants.length]);
+  }, [conference.participants.length, locale]);
 
   async function join(details: JoinOptions) {
     setJoinDetails(details);
@@ -236,7 +246,10 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       setAdmissionError(
         caughtError instanceof RoomApiError
           ? caughtError.message
-          : "Сервер не разрешил вход в комнату.",
+          : tr(
+              "The server did not allow entry to this room.",
+              "Сервер не разрешил вход в комнату.",
+            ),
       );
     } finally {
       setIsAdmissionBusy(false);
@@ -277,13 +290,18 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           {roomGate.status === "checking" ? (
             <>
               <LoaderCircle className={styles.gateSpinner} size={28} />
-              <h1>Проверяем комнату</h1>
-              <p>Сверяем код с локальным сервером Ninjitsi.</p>
+              <h1>{tr("Checking the room", "Проверяем комнату")}</h1>
+              <p>
+                {tr(
+                  "Verifying the code with the Ninjitsi server.",
+                  "Сверяем код с локальным сервером Ninjitsi.",
+                )}
+              </p>
             </>
           ) : (
             <>
               <WifiOff size={28} />
-              <h1>Войти не получилось</h1>
+              <h1>{tr("Could not join", "Войти не получилось")}</h1>
               <p>{roomGate.error}</p>
               <div className={styles.gateActions}>
                 <button
@@ -291,7 +309,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
                   type="button"
                 >
                   <ArrowLeft size={16} />
-                  На главную
+                  {tr("Home", "На главную")}
                 </button>
                 <button
                   className={styles.gatePrimary}
@@ -299,7 +317,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
                   type="button"
                 >
                   <RefreshCw size={16} />
-                  Проверить снова
+                  {tr("Try again", "Проверить снова")}
                 </button>
               </div>
             </>
@@ -318,7 +336,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           <div>
             <strong>{roomName}</strong>
             <span>
-              {conference.isDemo ? "демонстрация интерфейса" : "Jitsi-комната"}
+              {conference.isDemo
+                ? tr("interface demo", "демонстрация интерфейса")
+                : tr("Jitsi room", "Jitsi-комната")}
             </span>
           </div>
         </div>
@@ -333,7 +353,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         <div className={styles.headerActions}>
           <button onClick={() => void copyLink()} type="button">
             {copied ? <Check size={15} /> : <Copy size={15} />}
-            {copied ? "Скопировано" : "Скопировать ссылку"}
+            {copied
+              ? tr("Copied", "Скопировано")
+              : tr("Copy link", "Скопировать ссылку")}
           </button>
           <SettingsPanel
             audioInputId={conference.audioInputId}
@@ -346,10 +368,10 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             videoInputId={conference.videoInputId}
           />
           <button
-            aria-label="Полноэкранный режим"
+            aria-label={tr("Fullscreen", "Полноэкранный режим")}
             className={styles.iconButton}
             onClick={() => void toggleFullscreen()}
-            title="Полноэкранный режим"
+            title={tr("Fullscreen", "Полноэкранный режим")}
             type="button"
           >
             <Maximize2 size={16} />
@@ -370,7 +392,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           ) : (
             <div className={styles.emptyStage}>
               <Radio size={26} />
-              <span>Ожидаем участников</span>
+              <span>{tr("Waiting for participants", "Ожидаем участников")}</span>
             </div>
           )}
         </section>
@@ -407,7 +429,10 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       {conference.status === "reconnecting" && (
         <div className={styles.reconnecting}>
           <WifiOff size={15} />
-          Связь прервалась. Восстанавливаем…
+          {tr(
+            "Connection interrupted. Reconnecting…",
+            "Связь прервалась. Восстанавливаем…",
+          )}
         </div>
       )}
 

@@ -8,6 +8,7 @@ import {
   PhoneOff,
 } from "lucide-react";
 import type { CSSProperties } from "react";
+import { useI18n } from "@/lib/i18n";
 import styles from "./CallControls.module.css";
 
 interface CallControlsProps {
@@ -84,6 +85,8 @@ export function CallControls({
   onToggleScreenShare,
   onToggleVideo,
 }: CallControlsProps) {
+  const { tr } = useI18n();
+
   return (
     <footer className={styles.bar}>
       <div className={styles.dock}>
@@ -92,10 +95,10 @@ export function CallControls({
           disabled={isAudioBusy}
           label={
             isAudioBusy
-              ? "Подключаем микрофон"
+              ? tr("Connecting microphone", "Подключаем микрофон")
               : isAudioMuted
-                ? "Включить микрофон"
-                : "Выключить микрофон"
+                ? tr("Turn microphone on", "Включить микрофон")
+                : tr("Turn microphone off", "Выключить микрофон")
           }
           onClick={onToggleAudio}
           toggledOff={isAudioMuted}
@@ -112,10 +115,10 @@ export function CallControls({
           disabled={isVideoBusy}
           label={
             isVideoBusy
-              ? "Подключаем камеру"
+              ? tr("Connecting camera", "Подключаем камеру")
               : isVideoMuted
-                ? "Включить камеру"
-                : "Выключить камеру"
+                ? tr("Turn camera on", "Включить камеру")
+                : tr("Turn camera off", "Выключить камеру")
           }
           onClick={onToggleVideo}
           toggledOff={isVideoMuted}
@@ -133,10 +136,10 @@ export function CallControls({
           disabled={isScreenShareBusy}
           label={
             isScreenShareBusy
-              ? "Готовим показ экрана"
+              ? tr("Preparing screen share", "Готовим показ экрана")
               : isScreenSharing
-                ? "Остановить показ"
-                : "Показать экран"
+                ? tr("Stop sharing", "Остановить показ")
+                : tr("Share screen", "Показать экран")
           }
           onClick={onToggleScreenShare}
         >
@@ -147,7 +150,11 @@ export function CallControls({
           )}
         </ControlButton>
         <span className={styles.divider} />
-        <ControlButton danger label="Завершить звонок" onClick={onHangup}>
+        <ControlButton
+          danger
+          label={tr("Leave call", "Завершить звонок")}
+          onClick={onHangup}
+        >
           <PhoneOff size={21} />
         </ControlButton>
       </div>

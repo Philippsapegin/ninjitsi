@@ -1,5 +1,6 @@
 import { LockKeyhole, Users } from "lucide-react";
 import type { ParticipantConnectionInfo } from "@/lib/jitsi/types";
+import { useI18n } from "@/lib/i18n";
 import styles from "./ConnectionSummary.module.css";
 
 interface ConnectionSummaryProps {
@@ -18,15 +19,20 @@ function qualityLevel(quality: number | null) {
 }
 
 function ConnectionStrength({ quality }: { quality: number | null }) {
+  const { tr } = useI18n();
   const level = qualityLevel(quality);
 
   return (
     <span
       aria-label={
-        quality === null ? "Сила соединения неизвестна" : `Соединение ${quality}%`
+        quality === null
+          ? tr("Connection strength unknown", "Сила соединения неизвестна")
+          : `${tr("Connection", "Соединение")} ${quality}%`
       }
       className={styles.strength}
-      title={quality === null ? "Нет данных" : `${quality}%`}
+      title={
+        quality === null ? tr("No data", "Нет данных") : `${quality}%`
+      }
     >
       {[1, 2, 3, 4].map((bar) => (
         <i className={bar <= level ? styles.filled : ""} key={bar} />
@@ -41,9 +47,11 @@ export function ConnectionSummary({
   protectedRoom,
   timer,
 }: ConnectionSummaryProps) {
+  const { tr } = useI18n();
+
   return (
     <div
-      aria-label="Статистика соединения"
+      aria-label={tr("Connection statistics", "Статистика соединения")}
       className={styles.root}
       data-connection-summary
       tabIndex={0}
@@ -57,14 +65,19 @@ export function ConnectionSummary({
         <>
           <span className={styles.divider} />
           <LockKeyhole size={13} />
-          <span>с паролем</span>
+          <span>{tr("password protected", "с паролем")}</span>
         </>
       )}
 
       <section className={styles.popover}>
         <header>
-          <strong>Соединение</strong>
-          <span>Пинг обновляется во время встречи</span>
+          <strong>{tr("Connection", "Соединение")}</strong>
+          <span>
+            {tr(
+              "Ping updates during the meeting",
+              "Пинг обновляется во время встречи",
+            )}
+          </span>
         </header>
         <div className={styles.table}>
           {participants.map((participant) => (
@@ -76,7 +89,7 @@ export function ConnectionSummary({
               <strong data-participant-ping={participant.id}>
                 {participant.pingMs === null
                   ? "—"
-                  : `${participant.pingMs} мс`}
+                  : `${participant.pingMs} ${tr("ms", "мс")}`}
               </strong>
             </div>
           ))}

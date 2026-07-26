@@ -1,3 +1,5 @@
+import { getStoredLocale, localize } from "@/lib/i18n";
+
 export interface RoomRecord {
   code: string;
   createdAt: string;
@@ -24,19 +26,25 @@ export class RoomApiError extends Error {
 
 async function roomRequest<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const locale = getStoredLocale();
 
   try {
     response = await fetch(path, {
       ...init,
       headers: {
         Accept: "application/json",
+        "X-Ninjitsi-Locale": locale,
         ...(init?.body ? { "Content-Type": "application/json" } : {}),
         ...init?.headers,
       },
     });
   } catch {
     throw new RoomApiError(
-      "Сервер комнат недоступен. Проверьте, что Ninjitsi запущен.",
+      localize(
+        locale,
+        "The room server is unavailable. Make sure Ninjitsi is running.",
+        "Сервер комнат недоступен. Проверьте, что Ninjitsi запущен.",
+      ),
       0,
     );
   }
@@ -56,7 +64,12 @@ async function roomRequest<T>(path: string, init?: RequestInit): Promise<T> {
         : null;
 
     throw new RoomApiError(
-      responseError ?? "Сервер комнат отклонил запрос.",
+      responseError ??
+        localize(
+          locale,
+          "The room server rejected the request.",
+          "Сервер комнат отклонил запрос.",
+        ),
       response.status,
     );
   }

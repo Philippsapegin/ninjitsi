@@ -188,7 +188,11 @@
 
 .volumeControl input::-webkit-slider-runnable-track {
   height: 3px;
-  background: #444c54;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--volume-progress),
+    #444c54 var(--volume-progress) 100%
+  );
   border-radius: 999px;
 }
 
@@ -205,6 +209,12 @@
 .volumeControl input::-moz-range-track {
   height: 3px;
   background: #444c54;
+  border-radius: 999px;
+}
+
+.volumeControl input::-moz-range-progress {
+  height: 3px;
+  background: var(--accent);
   border-radius: 999px;
 }
 

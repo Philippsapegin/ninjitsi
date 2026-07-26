@@ -76,6 +76,15 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function localizedError(request, english, russian) {
+  return {
+    error:
+      request.headers["x-ninjitsi-locale"] === "ru"
+        ? russian
+        : english,
+  };
+}
+
 function publicRoom(room) {
   return {
     code: room.code,
@@ -219,7 +228,11 @@ async function handleApi(request, response, pathname) {
       json(
         response,
         error.message === "request-too-large" ? 413 : 400,
-        { error: "Некорректный запрос на создание комнаты." },
+        localizedError(
+          request,
+          "Invalid room creation request.",
+          "Некорректный запрос на создание комнаты.",
+        ),
       );
       return true;
     }
@@ -230,16 +243,30 @@ async function handleApi(request, response, pathname) {
       Array.isArray(body) ||
       (body.password !== undefined && typeof body.password !== "string")
     ) {
-      json(response, 400, {
-        error: "Поле password должно быть строкой.",
-      });
+      json(
+        response,
+        400,
+        localizedError(
+          request,
+          "The password field must be a string.",
+          "Поле password должно быть строкой.",
+        ),
+      );
       return true;
     }
 
     const password = body.password ?? "";
 
     if (password.length > 200) {
-      json(response, 400, { error: "Пароль слишком длинный." });
+      json(
+        response,
+        400,
+        localizedError(
+          request,
+          "The password is too long.",
+          "Пароль слишком длинный.",
+        ),
+      );
       return true;
     }
 
@@ -286,7 +313,11 @@ async function handleApi(request, response, pathname) {
       json(
         response,
         error.message === "request-too-large" ? 413 : 400,
-        { error: "Некорректный запрос на вход." },
+        localizedError(
+          request,
+          "Invalid room admission request.",
+          "Некорректный запрос на вход.",
+        ),
       );
       return true;
     }
@@ -300,21 +331,43 @@ async function handleApi(request, response, pathname) {
       typeof body.password !== "string" ||
       body.password.length > 200
     ) {
-      json(response, 400, { error: "Некорректный запрос на вход." });
+      json(
+        response,
+        400,
+        localizedError(
+          request,
+          "Invalid room admission request.",
+          "Некорректный запрос на вход.",
+        ),
+      );
       return true;
     }
 
     const room = rooms.get(code);
 
     if (!room) {
-      json(response, 404, {
-        error: "Комната не найдена. Попросите создателя прислать новую ссылку.",
-      });
+      json(
+        response,
+        404,
+        localizedError(
+          request,
+          "Room not found. Ask its creator for a new link.",
+          "Комната не найдена. Попросите создателя прислать новую ссылку.",
+        ),
+      );
       return true;
     }
 
     if (!(await passwordMatches(room, body.password))) {
-      json(response, 403, { error: "Пароль комнаты не подошёл." });
+      json(
+        response,
+        403,
+        localizedError(
+          request,
+          "The room password is incorrect.",
+          "Пароль комнаты не подошёл.",
+        ),
+      );
       return true;
     }
 
@@ -330,21 +383,43 @@ async function handleApi(request, response, pathname) {
     try {
       code = decodeURIComponent(roomMatch[1]).toLowerCase();
     } catch {
-      json(response, 400, { error: "Некорректный код комнаты." });
+      json(
+        response,
+        400,
+        localizedError(
+          request,
+          "Invalid room code.",
+          "Некорректный код комнаты.",
+        ),
+      );
       return true;
     }
 
     if (!roomCodePattern.test(code) || code.length > 80) {
-      json(response, 400, { error: "Некорректный код комнаты." });
+      json(
+        response,
+        400,
+        localizedError(
+          request,
+          "Invalid room code.",
+          "Некорректный код комнаты.",
+        ),
+      );
       return true;
     }
 
     const room = rooms.get(code);
 
     if (!room) {
-      json(response, 404, {
-        error: "Комната не найдена. Попросите создателя прислать новую ссылку.",
-      });
+      json(
+        response,
+        404,
+        localizedError(
+          request,
+          "Room not found. Ask its creator for a new link.",
+          "Комната не найдена. Попросите создателя прислать новую ссылку.",
+        ),
+      );
       return true;
     }
 
@@ -353,7 +428,15 @@ async function handleApi(request, response, pathname) {
   }
 
   if (pathname.startsWith("/api/")) {
-    json(response, 404, { error: "API-маршрут не найден." });
+    json(
+      response,
+      404,
+      localizedError(
+        request,
+        "API route not found.",
+        "API-маршрут не найден.",
+      ),
+    );
     return true;
   }
 
@@ -389,7 +472,15 @@ async function sendFile(request, response, filePath) {
 
 async function handleStatic(request, response, pathname) {
   if (request.method !== "GET" && request.method !== "HEAD") {
-    json(response, 405, { error: "Метод не поддерживается." });
+    json(
+      response,
+      405,
+      localizedError(
+        request,
+        "Method not allowed.",
+        "Метод не поддерживается.",
+      ),
+    );
     return;
   }
 
@@ -413,7 +504,11 @@ async function handleStatic(request, response, pathname) {
   try {
     decodedPath = decodeURIComponent(pathname);
   } catch {
-    json(response, 400, { error: "Некорректный URL." });
+    json(
+      response,
+      400,
+      localizedError(request, "Invalid URL.", "Некорректный URL."),
+    );
     return;
   }
 
@@ -423,7 +518,11 @@ async function handleStatic(request, response, pathname) {
     requestedPath === staticRoot || requestedPath.startsWith(`${staticRoot}${sep}`);
 
   if (!isInsideStaticRoot) {
-    json(response, 403, { error: "Доступ запрещён." });
+    json(
+      response,
+      403,
+      localizedError(request, "Access denied.", "Доступ запрещён."),
+    );
     return;
   }
 
@@ -444,7 +543,11 @@ async function handleStatic(request, response, pathname) {
     return;
   }
 
-  json(response, 404, { error: "Файл не найден." });
+  json(
+    response,
+    404,
+    localizedError(request, "File not found.", "Файл не найден."),
+  );
 }
 
 await loadRooms();
@@ -462,7 +565,15 @@ const server = createServer(async (request, response) => {
     console.error(error);
 
     if (!response.headersSent) {
-      json(response, 500, { error: "Внутренняя ошибка сервера." });
+      json(
+        response,
+        500,
+        localizedError(
+          request,
+          "Internal server error.",
+          "Внутренняя ошибка сервера.",
+        ),
+      );
     } else {
       response.destroy();
     }

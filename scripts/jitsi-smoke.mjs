@@ -96,6 +96,7 @@ try {
     const originalGetUserMedia =
       navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
 
+    localStorage.setItem("ninjitsi.locale", "ru");
     window.__ninjitsiCapturedConstraints = [];
     navigator.mediaDevices.getUserMedia = (constraints) => {
       window.__ninjitsiCapturedConstraints.push(constraints);
@@ -104,6 +105,7 @@ try {
   });
   await page.addInitScript(
     ({ forceJvbForTesting, serverUrl }) => {
+      localStorage.setItem("ninjitsi.locale", "ru");
       window.__NINJITSI_CONFIG__ = {
         forceJvbForTesting,
         jitsiUrl: serverUrl,
@@ -190,6 +192,7 @@ try {
   });
   await observerPage.addInitScript(
     ({ forceJvbForTesting, serverUrl }) => {
+      localStorage.setItem("ninjitsi.locale", "ru");
       window.__NINJITSI_CONFIG__ = {
         forceJvbForTesting,
         jitsiUrl: serverUrl,
@@ -221,6 +224,31 @@ try {
     state: "attached",
     timeout: 30_000,
   });
+
+  for (const [clientName, clientPage] of [
+    ["publisher", page],
+    ["observer", observerPage],
+  ]) {
+    const audioRouting = await clientPage.locator("audio").evaluateAll(
+      (elements) =>
+        elements.map((element) => ({
+          participantId: element.dataset.participantAudio,
+          source: element.dataset.audioSource,
+        })),
+    );
+
+    if (
+      audioRouting.length !== 1 ||
+      audioRouting.some(
+        ({ participantId, source }) =>
+          !participantId || source !== "remote",
+      )
+    ) {
+      throw new Error(
+        `${clientName} client attached a local or unidentified audio stream: ${JSON.stringify(audioRouting)}`,
+      );
+    }
+  }
 
   await page
     .getByRole("button", {
@@ -282,6 +310,7 @@ try {
   });
   await bystanderPage.addInitScript(
     ({ forceJvbForTesting, serverUrl }) => {
+      localStorage.setItem("ninjitsi.locale", "ru");
       window.__NINJITSI_CONFIG__ = {
         forceJvbForTesting,
         jitsiUrl: serverUrl,
@@ -370,6 +399,81 @@ try {
   if (!remoteAttachmentHref?.startsWith("data:text/plain;base64,")) {
     throw new Error("Вложение не дошло как временный data URL");
   }
+
+  const transparentImageName = `transparent-${Date.now()}.png`;
+  const transparentImageTransfer = await page.evaluateHandle((name) => {
+    const canvas = document.createElement("canvas");
+    const transfer = new DataTransfer();
+
+    canvas.width = 2;
+    canvas.height = 2;
+    const dataUrl = canvas.toDataURL("image/png");
+    const binary = atob(dataUrl.split(",")[1]);
+    const bytes = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
+    );
+
+    transfer.items.add(
+      new File([bytes], name, {
+        type: "image/png",
+      }),
+    );
+    return transfer;
+  }, transparentImageName);
+
+  await chatSidebar.dispatchEvent("drop", {
+    dataTransfer: transparentImageTransfer,
+  });
+  const remoteImageButton = observerPage.getByRole("button", {
+    name: `Открыть изображение ${transparentImageName}`,
+  });
+
+  await remoteImageButton.waitFor({ timeout: 30_000 });
+  if (
+    (await observerPage
+      .locator(`a[download="${transparentImageName}"]`)
+      .count()) !== 0 ||
+    (await remoteImageButton.evaluate(
+      (element, imageName) =>
+        element.textContent?.includes(String(imageName)) ?? false,
+      transparentImageName,
+    ))
+  ) {
+    throw new Error("Remote image is still a captioned download.");
+  }
+
+  await remoteImageButton.click();
+  const remoteImageViewer = observerPage.getByRole("dialog", {
+    name: "Просмотр изображения",
+  });
+  const remoteImageState = await remoteImageViewer.locator("img").evaluate(
+    async (image) => {
+      if (!(image instanceof HTMLImageElement)) {
+        return null;
+      }
+
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+
+      canvas.width = 1;
+      canvas.height = 1;
+      context?.drawImage(image, 0, 0, 1, 1);
+      return {
+        alpha: context?.getImageData(0, 0, 1, 1).data[3],
+        isPng: image.src.startsWith("data:image/png"),
+      };
+    },
+  );
+
+  if (!remoteImageState?.isPng || remoteImageState.alpha !== 0) {
+    throw new Error(
+      `Remote transparent PNG was altered: ${JSON.stringify(remoteImageState)}`,
+    );
+  }
+  await observerPage
+    .getByRole("button", { name: "Закрыть изображение" })
+    .click();
 
   await page.getByRole("button", { name: "Свернуть чат" }).click();
   await page.getByRole("button", { name: "Развернуть чат" }).waitFor();
@@ -544,6 +648,7 @@ try {
     let rejectFirstAudio = true;
     let rejectFirstVideo = true;
 
+    localStorage.setItem("ninjitsi.locale", "ru");
     navigator.mediaDevices.getUserMedia = (constraints) => {
       if (constraints.audio && rejectFirstAudio) {
         rejectFirstAudio = false;
@@ -611,6 +716,7 @@ try {
           camera: "toggle passed",
           avatarPropagation: "passed",
           attachments: "ephemeral drag-and-drop passed",
+          imagePreview: "clickable transparent PNG passed",
           chat: "bidirectional transport passed",
           privateChat: "selected recipients only passed",
           connectionStats: "conference RTT passed",
@@ -618,6 +724,7 @@ try {
           microphone: "toggle passed",
           microphoneDefault: "explicit default device passed",
           microphoneLevel: "reactive outline passed",
+          ownAudioPlayback: "not attached",
           participantVolume: "0–200% local gain passed",
           noiseSuppression: "toggle passed",
           remotePropagation: "passed",

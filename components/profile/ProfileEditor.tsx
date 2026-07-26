@@ -10,6 +10,7 @@ import {
   readSelectedProfile,
 } from "@/lib/profiles";
 import type { ClientProfile, ProfileDraft } from "@/lib/profiles";
+import { useI18n } from "@/lib/i18n";
 import styles from "./ProfileEditor.module.css";
 
 interface ProfileEditorProps {
@@ -49,6 +50,7 @@ export function ProfileEditor({
   onChange,
   value,
 }: ProfileEditorProps) {
+  const { tr } = useI18n();
   const [profiles, setProfiles] = useState<ClientProfile[]>([]);
   const [avatarError, setAvatarError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -87,7 +89,7 @@ export function ProfileEditor({
       setAvatarError(
         caughtError instanceof Error
           ? caughtError.message
-          : "Не удалось прочитать изображение",
+          : tr("Could not read the image", "Не удалось прочитать изображение"),
       );
     }
   }
@@ -117,7 +119,7 @@ export function ProfileEditor({
   return (
     <section className={styles.editor}>
       <div className={styles.heading}>
-        <span>Профиль</span>
+        <span>{tr("Profile", "Профиль")}</span>
         <button
           onClick={() =>
             onChange({
@@ -129,19 +131,22 @@ export function ProfileEditor({
           type="button"
         >
           <Plus size={13} />
-          Новый
+          {tr("New", "Новый")}
         </button>
       </div>
 
       {profiles.length > 0 && (
-        <div aria-label="Сохранённые профили" className={styles.saved}>
+        <div
+          aria-label={tr("Saved profiles", "Сохранённые профили")}
+          className={styles.saved}
+        >
           {profiles.map((profile) => {
             const isSelected = profile.id === value.profileId;
 
             return (
               <span className={styles.savedProfile} key={profile.id}>
                 <button
-                  aria-label={`Выбрать профиль ${profile.displayName}`}
+                  aria-label={`${tr("Select profile", "Выбрать профиль")} ${profile.displayName}`}
                   aria-pressed={isSelected}
                   className={isSelected ? styles.selected : ""}
                   onClick={() => selectProfile(profile)}
@@ -155,10 +160,10 @@ export function ProfileEditor({
                 </button>
                 {isSelected && (
                   <button
-                    aria-label={`Удалить профиль ${profile.displayName}`}
+                    aria-label={`${tr("Delete profile", "Удалить профиль")} ${profile.displayName}`}
                     className={styles.deleteProfile}
                     onClick={() => deleteSelectedProfile(profile)}
-                    title={`Удалить профиль ${profile.displayName}`}
+                    title={`${tr("Delete profile", "Удалить профиль")} ${profile.displayName}`}
                     type="button"
                   >
                     <X size={8} strokeWidth={3} />
@@ -172,7 +177,11 @@ export function ProfileEditor({
 
       <div className={styles.profileFields}>
         <button
-          aria-label={value.avatarDataUrl ? "Сменить аватарку" : "Загрузить аватарку"}
+          aria-label={
+            value.avatarDataUrl
+              ? tr("Change avatar", "Сменить аватарку")
+              : tr("Upload avatar", "Загрузить аватарку")
+          }
           className={styles.avatarButton}
           onClick={() => fileInputRef.current?.click()}
           type="button"
@@ -191,15 +200,18 @@ export function ProfileEditor({
         </button>
 
         <label className={styles.nameField}>
-          <span>Ваше имя</span>
+          <span>{tr("Your name", "Ваше имя")}</span>
           <input
-            aria-label="Ваше имя"
+            aria-label={tr("Your name", "Ваше имя")}
             autoComplete="name"
             autoFocus={autoFocus}
             onChange={(event) =>
               onChange({ ...value, displayName: event.target.value })
             }
-            placeholder="Как вас представить?"
+            placeholder={tr(
+              "How should we introduce you?",
+              "Как вас представить?",
+            )}
             value={value.displayName}
           />
         </label>

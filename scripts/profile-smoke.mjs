@@ -23,6 +23,7 @@ const browser = await chromium.launch({ executablePath, headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 
 await page.addInitScript(() => {
+  localStorage.setItem("ninjitsi.locale", "ru");
   window.__NINJITSI_CONFIG__ = { jitsiUrl: "" };
 });
 

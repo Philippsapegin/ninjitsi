@@ -24,6 +24,9 @@ const browser = await chromium.launch({ executablePath, headless: true });
 try {
   const creator = await browser.newPage();
 
+  await creator.addInitScript(() => {
+    localStorage.setItem("ninjitsi.locale", "ru");
+  });
   await creator.goto(baseUrl, { waitUntil: "networkidle" });
   await creator.getByLabel("Ваше имя").fill("Создатель");
   await creator.getByRole("button", { name: "Создать комнату" }).click();
@@ -65,9 +68,25 @@ try {
       method: "POST",
     },
   );
+  const wrongPasswordBody = await wrongPasswordResponse.json();
+  const russianWrongPasswordResponse = await fetch(
+    `${baseUrl}/api/rooms/${protectedRoom.room.code}/join`,
+    {
+      body: JSON.stringify({ password: "wrong-secret" }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Ninjitsi-Locale": "ru",
+      },
+      method: "POST",
+    },
+  );
+  const russianWrongPasswordBody =
+    await russianWrongPasswordResponse.json();
 
   if (
     wrongPasswordResponse.status !== 403 ||
+    wrongPasswordBody.error !== "The room password is incorrect." ||
+    russianWrongPasswordBody.error !== "Пароль комнаты не подошёл." ||
     !correctPasswordResponse.ok
   ) {
     throw new Error("Сервер некорректно проверяет пароль комнаты.");
@@ -75,6 +94,9 @@ try {
 
   const guest = await browser.newPage();
 
+  await guest.addInitScript(() => {
+    localStorage.setItem("ninjitsi.locale", "ru");
+  });
   await guest.goto(baseUrl, { waitUntil: "networkidle" });
   await guest.getByRole("button", { name: "Войти по коду" }).click();
   await guest.getByLabel("Код комнаты").fill(roomCode);
@@ -89,6 +111,9 @@ try {
 
   const invalid = await browser.newPage();
 
+  await invalid.addInitScript(() => {
+    localStorage.setItem("ninjitsi.locale", "ru");
+  });
   await invalid.goto(`${baseUrl}/room/not-created-99999`, {
     waitUntil: "networkidle",
   });

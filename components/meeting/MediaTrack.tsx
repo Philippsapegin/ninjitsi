@@ -44,11 +44,16 @@ export function VideoTrack({ isLocal, track }: VideoTrackProps) {
 }
 
 interface AudioTrackProps {
+  participantId: string;
   track: JitsiTrackLike;
   volume: number;
 }
 
-export function AudioTrack({ track, volume }: AudioTrackProps) {
+export function AudioTrack({
+  participantId,
+  track,
+  volume,
+}: AudioTrackProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const gainRef = useRef<GainNode | null>(null);
   const volumeRef = useRef(volume);
@@ -115,7 +120,9 @@ export function AudioTrack({ track, volume }: AudioTrackProps) {
   return (
     <audio
       autoPlay
+      data-audio-source="remote"
       data-output-volume={volume}
+      data-participant-audio={participantId}
       ref={audioRef}
     />
   );

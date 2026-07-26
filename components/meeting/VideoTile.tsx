@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   MicOff,
   MonitorUp,
@@ -7,6 +12,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import type { ParticipantView } from "@/lib/jitsi/types";
+import { useI18n } from "@/lib/i18n";
 import { VideoTrack } from "./MediaTrack";
 import styles from "./VideoTile.module.css";
 
@@ -52,6 +58,7 @@ export function VideoTile({
   participant,
   volume,
 }: VideoTileProps) {
+  const { tr } = useI18n();
   const [volumeOpen, setVolumeOpen] = useState(false);
   const volumeControlRef = useRef<HTMLDivElement>(null);
   const hasVisibleVideo =
@@ -120,7 +127,7 @@ export function VideoTile({
         ) : (
           <button
             aria-expanded={volumeOpen}
-            aria-label={`Громкость участника ${participant.displayName}: ${volumePercent}%`}
+            aria-label={`${tr("Volume for", "Громкость участника")} ${participant.displayName}: ${volumePercent}%`}
             className={styles.nameButton}
             onClick={() => setVolumeOpen((current) => !current)}
             type="button"
@@ -130,7 +137,7 @@ export function VideoTile({
         )}
         {participant.isModerator && (
           <ShieldCheck
-            aria-label="Модератор"
+            aria-label={tr("Moderator", "Модератор")}
             className={styles.moderator}
             size={14}
           />
@@ -138,11 +145,11 @@ export function VideoTile({
 
         {!participant.isLocal && volumeOpen && (
           <section
-            aria-label={`Громкость ${participant.displayName}`}
+            aria-label={`${tr("Volume", "Громкость")} ${participant.displayName}`}
             className={styles.volumeControl}
           >
             <header>
-              <span>Громкость</span>
+              <span>{tr("Volume", "Громкость")}</span>
               <strong>{volumePercent}%</strong>
             </header>
             <div>
@@ -152,7 +159,7 @@ export function VideoTile({
                 <Volume2 size={14} />
               )}
               <input
-                aria-label={`Громкость ${participant.displayName}`}
+                aria-label={`${tr("Volume", "Громкость")} ${participant.displayName}`}
                 data-participant-volume={participant.id}
                 max="200"
                 min="0"
@@ -160,12 +167,17 @@ export function VideoTile({
                   onVolumeChange(Number(event.target.value) / 100)
                 }
                 step="1"
+                style={
+                  {
+                    "--volume-progress": `${volumePercent / 2}%`,
+                  } as CSSProperties
+                }
                 type="range"
                 value={volumePercent}
               />
             </div>
             <button onClick={() => onVolumeChange(1)} type="button">
-              Сбросить на 100%
+              {tr("Reset to 100%", "Сбросить на 100%")}
             </button>
           </section>
         )}
@@ -175,11 +187,14 @@ export function VideoTile({
         {participant.isScreenSharing && (
           <span className={styles.screenBadge}>
             <MonitorUp size={13} />
-            экран
+            {tr("screen", "экран")}
           </span>
         )}
         {participant.audioMuted && (
-          <span className={styles.mutedBadge} title="Микрофон выключен">
+          <span
+            className={styles.mutedBadge}
+            title={tr("Microphone is off", "Микрофон выключен")}
+          >
             <MicOff size={14} />
           </span>
         )}

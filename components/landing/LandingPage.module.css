@@ -33,10 +33,39 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.headerNote {
+.languageToggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.languageToggle button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
   color: var(--text-faint);
-  font-size: 13px;
-  letter-spacing: 0.01em;
+  background: var(--surface);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 760;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.languageToggle button:hover {
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.languageToggle button.languageActive {
+  color: var(--accent-ink);
+  background: var(--accent);
 }
 
 .hero {
@@ -79,18 +108,11 @@
 .copy h1 {
   max-width: 700px;
   margin: 0;
-  font-size: clamp(58px, 5vw, 76px);
+  font-size: clamp(40px, 4vw, 64px);
   font-weight: 620;
   letter-spacing: -0.075em;
-  line-height: 0.88;
-}
-
-.copy h1 span {
-  display: block;
-}
-
-.copy h1 span:last-child {
-  color: var(--text-faint);
+  line-height: 0.96;
+  white-space: nowrap;
 }
 
 .form {
@@ -520,10 +542,6 @@
   .hero {
     grid-template-columns: minmax(360px, 0.85fr) minmax(500px, 1.15fr);
     gap: 34px;
-  }
-
-  .copy h1 {
-    font-size: 58px;
   }
 
   .previewWorkspace {

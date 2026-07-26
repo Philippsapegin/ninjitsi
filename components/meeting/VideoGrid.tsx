@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import type { ParticipantView } from "@/lib/jitsi/types";
 import { useOptimalGrid } from "@/hooks/useOptimalGrid";
+import { useI18n } from "@/lib/i18n";
 import { VideoTile } from "./VideoTile";
 import styles from "./VideoGrid.module.css";
 
@@ -24,6 +25,7 @@ export function VideoGrid({
   participantVolumes,
   participants,
 }: VideoGridProps) {
+  const { tr } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const { columns, gap, tileHeight, tileWidth } = useOptimalGrid(
     containerRef,
@@ -46,7 +48,7 @@ export function VideoGrid({
         <div className={styles.scene}>
           <div className={styles.sceneMain}>
             <VideoTile
-              activationLabel={`Вернуть сетку из сцены ${focusedParticipant.displayName}`}
+              activationLabel={`${tr("Return to the grid from", "Вернуть сетку из сцены")} ${focusedParticipant.displayName}`}
               onActivate={() => onParticipantClick(null)}
               onVolumeChange={(volume) =>
                 onParticipantVolumeChange(
@@ -73,7 +75,7 @@ export function VideoGrid({
                   key={participant.id}
                 >
                   <VideoTile
-                    activationLabel={`Показать на сцене ${participant.displayName}`}
+                    activationLabel={`${tr("Show on stage", "Показать на сцене")} ${participant.displayName}`}
                     onActivate={() => onParticipantClick(participant.id)}
                     onVolumeChange={(volume) =>
                       onParticipantVolumeChange(participant.id, volume)
@@ -107,7 +109,7 @@ export function VideoGrid({
             style={{ height: tileHeight, width: tileWidth }}
           >
             <VideoTile
-              activationLabel={`Показать на сцене ${participant.displayName}`}
+              activationLabel={`${tr("Show on stage", "Показать на сцене")} ${participant.displayName}`}
               onActivate={() => onParticipantClick(participant.id)}
               onVolumeChange={(volume) =>
                 onParticipantVolumeChange(participant.id, volume)

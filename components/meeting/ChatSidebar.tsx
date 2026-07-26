@@ -13,14 +13,15 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  ImageIcon,
   LoaderCircle,
   LockKeyhole,
   MessageCircle,
   Paperclip,
   Send,
   Users,
+  X,
 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import type {
   ChatAttachment,
   ChatMessage,
@@ -51,48 +52,54 @@ function initials(name: string) {
   );
 }
 
-function formatFileSize(size: number) {
+function formatFileSize(size: number, locale: "en" | "ru") {
   if (size < 1024) {
-    return `${size} Б`;
+    return `${size} ${locale === "ru" ? "Б" : "B"}`;
   }
 
   if (size < 1024 * 1024) {
-    return `${Math.round(size / 1024)} КБ`;
+    return `${Math.round(size / 1024)} ${locale === "ru" ? "КБ" : "KB"}`;
   }
 
-  return `${(size / 1024 / 1024).toFixed(1)} МБ`;
+  return `${(size / 1024 / 1024).toFixed(1)} ${locale === "ru" ? "МБ" : "MB"}`;
 }
 
-function Attachment({ attachment }: { attachment: ChatAttachment }) {
+function Attachment({
+  attachment,
+  onPreview,
+}: {
+  attachment: ChatAttachment;
+  onPreview: (attachment: ChatAttachment) => void;
+}) {
+  const { locale, tr } = useI18n();
   const isImage = attachment.mimeType.startsWith("image/");
+
+  if (isImage) {
+    return (
+      <button
+        aria-label={`${tr("Open image", "Открыть изображение")} ${attachment.name}`}
+        className={`${styles.attachment} ${styles.imageAttachment}`}
+        onClick={() => onPreview(attachment)}
+        type="button"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img alt={attachment.name} src={attachment.dataUrl} />
+      </button>
+    );
+  }
 
   return (
     <a
-      className={`${styles.attachment} ${
-        isImage ? styles.imageAttachment : ""
-      }`}
+      className={styles.attachment}
       download={attachment.name}
       href={attachment.dataUrl}
-      title={`Скачать ${attachment.name}`}
+      title={`${tr("Download", "Скачать")} ${attachment.name}`}
     >
-      {isImage ? (
-        <>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img alt={attachment.name} src={attachment.dataUrl} />
-          <span>
-            <ImageIcon size={13} />
-            {attachment.name}
-          </span>
-        </>
-      ) : (
-        <>
-          <FileText size={18} />
-          <span>
-            <strong>{attachment.name}</strong>
-            <small>{formatFileSize(attachment.size)}</small>
-          </span>
-        </>
-      )}
+      <FileText size={18} />
+      <span>
+        <strong>{attachment.name}</strong>
+        <small>{formatFileSize(attachment.size, locale)}</small>
+      </span>
     </a>
   );
 }
@@ -105,10 +112,13 @@ export function ChatSidebar({
   onSendAttachment,
   participants,
 }: ChatSidebarProps) {
+  const { locale, tr } = useI18n();
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(true);
   const [dragActive, setDragActive] = useState(false);
   const [recipientMenuOpen, setRecipientMenuOpen] = useState(false);
+  const [previewAttachment, setPreviewAttachment] =
+    useState<ChatAttachment | null>(null);
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>(
     [],
   );
@@ -200,26 +210,29 @@ export function ChatSidebar({
   }
 
   return (
-    <aside
-      className={`${styles.root} ${open ? styles.open : styles.closed} ${
-        dragActive ? styles.dragActive : ""
-      }`}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        if (!disabled) {
-          setDragActive(true);
-        }
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setDragActive(false);
-        }
-      }}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={handleDrop}
-    >
+    <>
+      <aside
+        className={`${styles.root} ${open ? styles.open : styles.closed} ${
+          dragActive ? styles.dragActive : ""
+        }`}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          if (!disabled) {
+            setDragActive(true);
+          }
+        }}
+        onDragLeave={(event) => {
+          if (
+            !event.currentTarget.contains(event.relatedTarget as Node | null)
+          ) {
+            setDragActive(false);
+          }
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+      >
       <button
-        aria-label="Развернуть чат"
+        aria-label={tr("Expand chat", "Развернуть чат")}
         className={styles.tab}
         onClick={() => setOpen(true)}
         type="button"
@@ -231,10 +244,10 @@ export function ChatSidebar({
         <header>
           <div>
             <MessageCircle size={16} />
-            <strong>Чат</strong>
+            <strong>{tr("Chat", "Чат")}</strong>
           </div>
           <button
-            aria-label="Свернуть чат"
+            aria-label={tr("Collapse chat", "Свернуть чат")}
             onClick={() => setOpen(false)}
             type="button"
           >
@@ -246,9 +259,17 @@ export function ChatSidebar({
           {messages.length === 0 ? (
             <div className={styles.empty}>
               <MessageCircle size={20} />
-              <strong>Здесь начнётся разговор</strong>
+              <strong>
+                {tr(
+                  "The conversation starts here",
+                  "Здесь начнётся разговор",
+                )}
+              </strong>
               <span>
-                Сообщения и вложения живут только до закрытия встречи.
+                {tr(
+                  "Messages and attachments disappear when the meeting closes.",
+                  "Сообщения и вложения живут только до закрытия встречи.",
+                )}
               </span>
             </div>
           ) : (
@@ -269,10 +290,14 @@ export function ChatSidebar({
                   <header>
                     <strong>{message.senderName}</strong>
                     <time>
-                      {new Date(message.timestamp).toLocaleTimeString("ru-RU", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {new Date(message.timestamp).toLocaleTimeString(
+                        locale === "ru" ? "ru-RU" : "en-US",
+                        {
+                          hour: "2-digit",
+                          hour12: false,
+                          minute: "2-digit",
+                        },
+                      )}
                     </time>
                   </header>
                   {message.isPrivate && (
@@ -281,8 +306,8 @@ export function ChatSidebar({
                       {message.isLocal &&
                       message.recipientNames &&
                       message.recipientNames.length > 0
-                        ? `Лично: ${message.recipientNames.join(", ")}`
-                        : "Личное сообщение"}
+                        ? `${tr("Private", "Лично")}: ${message.recipientNames.join(", ")}`
+                        : tr("Private message", "Личное сообщение")}
                     </span>
                   )}
                   {message.text && <p>{message.text}</p>}
@@ -290,6 +315,7 @@ export function ChatSidebar({
                     <Attachment
                       attachment={attachment}
                       key={attachment.id}
+                      onPreview={setPreviewAttachment}
                     />
                   ))}
                 </div>
@@ -302,7 +328,10 @@ export function ChatSidebar({
           <div className={styles.recipientPicker} ref={recipientPickerRef}>
             <button
               aria-expanded={recipientMenuOpen}
-              aria-label="Выбрать получателей сообщения"
+              aria-label={tr(
+                "Select message recipients",
+                "Выбрать получателей сообщения",
+              )}
               className={
                 selectedRecipients.length > 0 ? styles.privateRecipient : ""
               }
@@ -317,13 +346,16 @@ export function ChatSidebar({
               )}
               <span>
                 {recipientUnavailable
-                  ? "Получатель вышел"
+                  ? tr("Recipient left", "Получатель вышел")
                   : selectedRecipients.length === 0
-                  ? "Всем"
-                  : `Лично: ${
+                  ? tr("Everyone", "Всем")
+                  : `${tr("Private", "Лично")}: ${
                       selectedRecipients.length === 1
                         ? selectedRecipients[0].displayName
-                        : `${selectedRecipients.length} участникам`
+                        : `${selectedRecipients.length} ${tr(
+                            "people",
+                            "участникам",
+                          )}`
                     }`}
               </span>
               <ChevronDown size={11} />
@@ -331,12 +363,20 @@ export function ChatSidebar({
 
             {recipientMenuOpen && (
               <section
-                aria-label="Получатели сообщения"
+                aria-label={tr(
+                  "Message recipients",
+                  "Получатели сообщения",
+                )}
                 className={styles.recipientMenu}
               >
                 <header>
-                  <strong>Кому отправить</strong>
-                  <span>Можно выбрать несколько</span>
+                  <strong>{tr("Send to", "Кому отправить")}</strong>
+                  <span>
+                    {tr(
+                      "You can select more than one",
+                      "Можно выбрать несколько",
+                    )}
+                  </span>
                 </header>
                 <button
                   className={
@@ -348,7 +388,7 @@ export function ChatSidebar({
                   type="button"
                 >
                   <Users size={13} />
-                  <span>Всем участникам</span>
+                  <span>{tr("Everyone", "Всем участникам")}</span>
                   {selectedRecipientIds.length === 0 && <Check size={12} />}
                 </button>
                 {remoteParticipants.map((participant) => {
@@ -377,13 +417,13 @@ export function ChatSidebar({
 
           <div className={styles.composer}>
             <button
-              aria-label="Добавить вложение"
+              aria-label={tr("Add attachment", "Добавить вложение")}
               className={styles.attachButton}
               disabled={
                 disabled || recipientUnavailable || isSendingAttachment
               }
               onClick={() => fileInputRef.current?.click()}
-              title="До 2 МБ на файл"
+              title={tr("Up to 2 MB per file", "До 2 МБ на файл")}
               type="button"
             >
               {isSendingAttachment ? (
@@ -393,7 +433,7 @@ export function ChatSidebar({
               )}
             </button>
             <textarea
-              aria-label="Сообщение в чат"
+              aria-label={tr("Chat message", "Сообщение в чат")}
               disabled={disabled}
               maxLength={4000}
               onChange={(event) => setDraft(event.target.value)}
@@ -403,12 +443,16 @@ export function ChatSidebar({
                   event.currentTarget.form?.requestSubmit();
                 }
               }}
-              placeholder={disabled ? "Войдите, чтобы писать" : "Сообщение…"}
+              placeholder={
+                disabled
+                  ? tr("Join to write", "Войдите, чтобы писать")
+                  : tr("Message…", "Сообщение…")
+              }
               rows={1}
               value={draft}
             />
             <button
-              aria-label="Отправить сообщение"
+              aria-label={tr("Send message", "Отправить сообщение")}
               className={styles.sendButton}
               disabled={disabled || recipientUnavailable || !draft.trim()}
               type="submit"
@@ -429,11 +473,36 @@ export function ChatSidebar({
         {dragActive && (
           <div className={styles.dropzone}>
             <Paperclip size={23} />
-            <strong>Отпустите файлы</strong>
-            <span>До 2 МБ на файл</span>
+            <strong>{tr("Drop files here", "Отпустите файлы")}</strong>
+            <span>{tr("Up to 2 MB per file", "До 2 МБ на файл")}</span>
           </div>
         )}
       </div>
-    </aside>
+
+      </aside>
+
+      {previewAttachment && (
+        <div
+          aria-label={tr("Image preview", "Просмотр изображения")}
+          className={styles.imageViewer}
+          onClick={() => setPreviewAttachment(null)}
+          role="dialog"
+        >
+          <button
+            aria-label={tr("Close image", "Закрыть изображение")}
+            onClick={() => setPreviewAttachment(null)}
+            type="button"
+          >
+            <X size={19} />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            alt={previewAttachment.name}
+            onClick={(event) => event.stopPropagation()}
+            src={previewAttachment.dataUrl}
+          />
+        </div>
+      )}
+    </>
   );
 }

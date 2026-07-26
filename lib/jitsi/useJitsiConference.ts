@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useJitsiServerUrl } from "@/lib/runtimeConfig";
+import { getStoredLocale, localize } from "@/lib/i18n";
 import { loadJitsiRuntime } from "./loader";
 import {
   readMediaPreferences,
@@ -67,15 +68,6 @@ interface ConferenceController {
   videoInputId: string;
 }
 
-const demoNames = [
-  "Лера К.",
-  "Михаил",
-  "Таня",
-  "Костя",
-  "Анна",
-  "Сергей",
-];
-
 const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
 const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
 const PRIVATE_CHAT_MESSAGE_TYPE = "ninjitsi.private-chat.v1";
@@ -90,6 +82,10 @@ const RECOVERABLE_CONFERENCE_ERRORS = new Set([
   "conference.videobridgeNotAvailable",
 ]);
 export const MAX_CHAT_ATTACHMENT_SIZE = 2 * 1024 * 1024;
+
+function ui(english: string, russian: string) {
+  return localize(getStoredLocale(), english, russian);
+}
 
 type AttachmentWireMessage =
   | {
@@ -244,11 +240,20 @@ async function readFileAsDataUrl(file: File) {
       if (typeof reader.result === "string") {
         resolve(reader.result);
       } else {
-        reject(new Error("Не удалось прочитать вложение"));
+        reject(
+          new Error(
+            ui("Could not read the attachment", "Не удалось прочитать вложение"),
+          ),
+        );
       }
     });
     reader.addEventListener("error", () =>
-      reject(reader.error ?? new Error("Не удалось прочитать вложение")),
+      reject(
+        reader.error ??
+          new Error(
+            ui("Could not read the attachment", "Не удалось прочитать вложение"),
+          ),
+      ),
     );
     reader.readAsDataURL(file);
   });
@@ -256,10 +261,12 @@ async function readFileAsDataUrl(file: File) {
 
 function mediaName(device: LocalMediaDevice) {
   if (device === "audio") {
-    return "микрофон";
+    return ui("microphone", "микрофон");
   }
 
-  return device === "video" ? "камеру" : "демонстрацию экрана";
+  return device === "video"
+    ? ui("camera", "камеру")
+    : ui("screen sharing", "демонстрацию экрана");
 }
 
 function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
@@ -277,7 +284,10 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
     normalized.includes("notallowed") ||
     normalized.includes("denied")
   ) {
-    return `Нет разрешения на ${target}. Разрешите доступ в адресной строке Chrome.`;
+    return ui(
+      `Chrome does not have permission to use the ${target}. Allow access in the address bar.`,
+      `Нет разрешения на ${target}. Разрешите доступ в адресной строке Chrome.`,
+    );
   }
 
   if (
@@ -285,7 +295,10 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
     normalized.includes("devicesnotfound") ||
     normalized.includes("no device")
   ) {
-    return `Не удалось найти ${target}. Проверьте подключение устройства.`;
+    return ui(
+      `Could not find the ${target}. Check that the device is connected.`,
+      `Не удалось найти ${target}. Проверьте подключение устройства.`,
+    );
   }
 
   if (
@@ -293,17 +306,23 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
     normalized.includes("trackstart") ||
     normalized.includes("could not start")
   ) {
-    return `Не удалось запустить ${target}: возможно, устройство занято другим приложением.`;
+    return ui(
+      `Could not start the ${target}; another application may be using it.`,
+      `Не удалось запустить ${target}: возможно, устройство занято другим приложением.`,
+    );
   }
 
   if (
     device === "desktop" &&
     (normalized.includes("abort") || normalized.includes("cancel"))
   ) {
-    return "Выбор экрана отменён.";
+    return ui("Screen selection was cancelled.", "Выбор экрана отменён.");
   }
 
-  return `Не удалось подключить ${target}.`;
+  return ui(
+    `Could not connect the ${target}.`,
+    `Не удалось подключить ${target}.`,
+  );
 }
 
 async function createLocalTrack(
@@ -355,7 +374,15 @@ function createDemoParticipants(
   displayName: string,
   avatarUrl: string,
 ): ParticipantView[] {
-  const people = [displayName, ...demoNames];
+  const people = [
+    displayName,
+    ui("Laura K.", "Лера К."),
+    ui("Michael", "Михаил"),
+    ui("Tanya", "Таня"),
+    ui("Kostya", "Костя"),
+    ui("Anna", "Анна"),
+    ui("Sergey", "Сергей"),
+  ];
 
   return people.map((name, index) => ({
     audioMuted: index === 3,
@@ -398,7 +425,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const conferenceRef = useRef<JitsiConferenceLike | null>(null);
   const libraryRef = useRef<JitsiMeetJSLibrary | null>(null);
   const localIdRef = useRef("local");
-  const localNameRef = useRef("Вы");
+  const localNameRef = useRef(ui("You", "Вы"));
   const localAvatarRef = useRef("");
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
@@ -516,7 +543,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
             typeof participant.getProperty?.("avatarURL") === "string"
               ? String(participant.getProperty?.("avatarURL"))
               : "",
-          displayName: participant.getDisplayName() || "Без имени",
+          displayName:
+            participant.getDisplayName() || ui("Unnamed participant", "Без имени"),
           id: participant.getId(),
           isDominantSpeaker:
             participant.getId() === dominantSpeakerRef.current,
@@ -994,10 +1022,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     isPrivate,
                     mimeType:
                       wireMessage.mimeType || "application/octet-stream",
-                    name: wireMessage.name.slice(0, 180) || "Вложение",
+                    name:
+                      wireMessage.name.slice(0, 180) ||
+                      ui("Attachment", "Вложение"),
                     recipientNames,
                     senderId: rawSenderId,
-                    senderName: sender?.getDisplayName() || "Без имени",
+                    senderName:
+                      sender?.getDisplayName() ||
+                      ui("Unnamed participant", "Без имени"),
                     size: wireMessage.size,
                     timestamp,
                     totalChunks: wireMessage.totalChunks,
@@ -1069,7 +1101,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
                   isPrivate,
                   recipientNames,
                   senderId: rawSenderId,
-                  senderName: sender?.getDisplayName() || "Без имени",
+                  senderName:
+                    sender?.getDisplayName() ||
+                    ui("Unnamed participant", "Без имени"),
                   text: rawText,
                   timestamp,
                 },
@@ -1174,7 +1208,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 conferenceEvents.TRACK_UNMUTE_REJECTED,
                 () => {
                   setError(
-                    "Сервер запретил включить медиапоток. Возможно, в комнате действует модерация.",
+                    ui(
+                      "The server blocked this media track. Media moderation may be enabled for the room.",
+                      "Сервер запретил включить медиапоток. Возможно, в комнате действует модерация.",
+                    ),
                   );
                   syncParticipants();
                 },
@@ -1206,7 +1243,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
               if (options.password && conference.isModerator()) {
                 await conference.lock(options.password).catch(() => {
-                  setError("Сервер не позволил установить пароль комнаты");
+                  setError(
+                    ui(
+                      "The server did not allow the room password to be set.",
+                      "Сервер не позволил установить пароль комнаты",
+                    ),
+                  );
                 });
               }
             });
@@ -1234,8 +1276,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
                 setError(
                   isPasswordError
-                    ? "Комната защищена: пароль не подошёл"
-                    : `Не удалось войти в комнату${
+                    ? ui(
+                        "The room is protected: the password is incorrect.",
+                        "Комната защищена: пароль не подошёл",
+                      )
+                    : `${ui(
+                        "Could not join the room",
+                        "Не удалось войти в комнату",
+                      )}${
                         typeof reason === "string" ? `: ${reason}` : ""
                       }`,
                 );
@@ -1316,7 +1364,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
               .filter((value) => typeof value === "string")
               .join(": ");
 
-            setError(`Jitsi-сервер отклонил соединение${reason ? `: ${reason}` : ""}`);
+            setError(
+              `${ui(
+                "The Jitsi server rejected the connection",
+                "Jitsi-сервер отклонил соединение",
+              )}${reason ? `: ${reason}` : ""}`,
+            );
             setStatus("failed");
             recoveringSessionRef.current = false;
             discardInitialTracks?.();
@@ -1339,7 +1392,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
             } else {
               recoveringSessionRef.current = false;
               setStatus("failed");
-              setError("Соединение с Jitsi-сервером прервано");
+              setError(
+                ui(
+                  "The connection to the Jitsi server was interrupted.",
+                  "Соединение с Jitsi-сервером прервано",
+                ),
+              );
             }
           },
         );
@@ -1359,7 +1417,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
         setError(
           caughtError instanceof Error
             ? caughtError.message
-            : "Не удалось запустить видеовстречу",
+            : ui(
+                "Could not start the video meeting.",
+                "Не удалось запустить видеовстречу",
+              ),
         );
         recoveringSessionRef.current = false;
         setStatus("failed");
@@ -1747,7 +1808,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
           noiseSuppressionEnabledRef.current = false;
           persistMediaPreferences();
           setError(
-            "Эта сборка Jitsi не поддерживает шумоподавление для аудиотрека.",
+            ui(
+              "This Jitsi build does not support noise suppression for audio tracks.",
+              "Эта сборка Jitsi не поддерживает шумоподавление для аудиотрека.",
+            ),
           );
         }
         return;
@@ -1772,7 +1836,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
         noiseSuppressionEnabledRef.current = !enabled;
         setNoiseSuppressionState(!enabled);
         persistMediaPreferences();
-        setError("Не удалось переключить шумоподавление.");
+        setError(
+          ui(
+            "Could not switch noise suppression.",
+            "Не удалось переключить шумоподавление.",
+          ),
+        );
       } finally {
         setMediaBusy("audio", false);
         setIsDeviceSwitchBusy(false);
@@ -1804,7 +1873,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
       const isPrivate = requestedRecipientIds.size > 0;
 
       if (isPrivate && recipients.length === 0) {
-        setError("Выбранные получатели уже покинули встречу.");
+        setError(
+          ui(
+            "The selected recipients have already left the meeting.",
+            "Выбранные получатели уже покинули встречу.",
+          ),
+        );
         return;
       }
 
@@ -1817,8 +1891,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
       ) {
         setError(
           isPrivate
-            ? "Личные сообщения недоступны в этой сборке Jitsi."
-            : "Чат недоступен в этой сборке Jitsi.",
+            ? ui(
+                "Private messages are unavailable in this Jitsi build.",
+                "Личные сообщения недоступны в этой сборке Jitsi.",
+              )
+            : ui(
+                "Chat is unavailable in this Jitsi build.",
+                "Чат недоступен в этой сборке Jitsi.",
+              ),
         );
         return;
       }
@@ -1849,7 +1929,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const sendChatAttachment = useCallback(
     async (file: File, recipientIds: string[] = []) => {
       if (file.size > MAX_CHAT_ATTACHMENT_SIZE) {
-        setError("Вложение должно быть не больше 2 МБ.");
+        setError(
+          ui(
+            "Attachments must not exceed 2 MB.",
+            "Вложение должно быть не больше 2 МБ.",
+          ),
+        );
         return;
       }
 
@@ -1868,7 +1953,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
       const isPrivate = requestedRecipientIds.size > 0;
 
       if (isPrivate && recipients.length === 0) {
-        setError("Выбранные получатели уже покинули встречу.");
+        setError(
+          ui(
+            "The selected recipients have already left the meeting.",
+            "Выбранные получатели уже покинули встречу.",
+          ),
+        );
         return;
       }
 
@@ -1881,8 +1971,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
       ) {
         setError(
           isPrivate
-            ? "Личные вложения недоступны в этой сборке Jitsi."
-            : "Вложения недоступны в этой сборке Jitsi.",
+            ? ui(
+                "Private attachments are unavailable in this Jitsi build.",
+                "Личные вложения недоступны в этой сборке Jitsi.",
+              )
+            : ui(
+                "Attachments are unavailable in this Jitsi build.",
+                "Вложения недоступны в этой сборке Jitsi.",
+              ),
         );
         return;
       }
@@ -1900,7 +1996,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
           dataUrl,
           id: attachmentId,
           mimeType: file.type || "application/octet-stream",
-          name: file.name || "Вложение",
+          name: file.name || ui("Attachment", "Вложение"),
           size: file.size,
         };
         const timestamp = Date.now();
@@ -1983,7 +2079,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
           timestamp,
         );
       } catch {
-        setError("Не удалось отправить вложение.");
+        setError(
+          ui(
+            "Could not send the attachment.",
+            "Не удалось отправить вложение.",
+          ),
+        );
       } finally {
         setIsSendingAttachment(false);
       }

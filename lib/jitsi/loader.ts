@@ -1,4 +1,5 @@
 import type { JitsiMeetJSLibrary } from "./types";
+import { getStoredLocale, localize } from "@/lib/i18n";
 
 interface JitsiRuntime {
   config: Record<string, unknown>;
@@ -30,7 +31,16 @@ function loadScript(id: string, source: string): Promise<void> {
       script.dataset.loaded = "true";
       resolve();
     };
-    script.onerror = () => reject(new Error(`Не удалось загрузить ${source}`));
+    script.onerror = () =>
+      reject(
+        new Error(
+          localize(
+            getStoredLocale(),
+            `Could not load ${source}`,
+            `Не удалось загрузить ${source}`,
+          ),
+        ),
+      );
 
     if (!existing) {
       document.head.appendChild(script);
@@ -66,7 +76,13 @@ export function loadJitsiRuntime(
       const deploymentConfig = window.config;
 
       if (!deploymentConfig?.hosts) {
-        throw new Error("Jitsi config.js не содержит hosts");
+        throw new Error(
+          localize(
+            getStoredLocale(),
+            "Jitsi config.js does not contain hosts.",
+            "Jitsi config.js не содержит hosts",
+          ),
+        );
       }
 
       await loadScript(
@@ -77,7 +93,13 @@ export function loadJitsiRuntime(
       const library = window.JitsiMeetJS;
 
       if (!library) {
-        throw new Error("lib-jitsi-meet загрузился без JitsiMeetJS");
+        throw new Error(
+          localize(
+            getStoredLocale(),
+            "lib-jitsi-meet loaded without JitsiMeetJS.",
+            "lib-jitsi-meet загрузился без JitsiMeetJS",
+          ),
+        );
       }
 
       return { config: deploymentConfig, library, serverUrl };
@@ -87,7 +109,11 @@ export function loadJitsiRuntime(
   return runtimePromise.then((runtime) => {
     if (runtime.serverUrl !== serverUrl) {
       throw new Error(
-        "Нельзя переключить Jitsi-сервер без перезагрузки страницы",
+        localize(
+          getStoredLocale(),
+          "The Jitsi server cannot be changed without reloading the page.",
+          "Нельзя переключить Jitsi-сервер без перезагрузки страницы",
+        ),
       );
     }
 
@@ -96,7 +122,13 @@ export function loadJitsiRuntime(
     const serviceUrl = websocket ?? bosh;
 
     if (!serviceUrl) {
-      throw new Error("В конфигурации Jitsi нет websocket или bosh");
+      throw new Error(
+        localize(
+          getStoredLocale(),
+          "The Jitsi configuration has no websocket or BOSH endpoint.",
+          "В конфигурации Jitsi нет websocket или bosh",
+        ),
+      );
     }
 
     const config = {

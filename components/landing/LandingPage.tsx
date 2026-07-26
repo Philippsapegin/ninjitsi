@@ -18,24 +18,17 @@ import {
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
 import { ProfileEditor } from "@/components/profile/ProfileEditor";
+import { useI18n } from "@/lib/i18n";
 import { saveClientProfile } from "@/lib/profiles";
 import type { ProfileDraft } from "@/lib/profiles";
 import { normalizeRoomName, savePendingJoin } from "@/lib/room";
 import { createRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import styles from "./LandingPage.module.css";
 
-const previewPeople = [
-  { name: "Лера", tone: "violet" },
-  { name: "Миша", tone: "blue" },
-  { name: "Таня", tone: "sand" },
-  { name: "Костя", tone: "mint" },
-  { name: "Аня", tone: "coral" },
-  { name: "Сергей", tone: "slate" },
-];
-
 type LandingMode = "create" | "join";
 
 export function LandingPage() {
+  const { locale, setLocale, tr } = useI18n();
   const [mode, setMode] = useState<LandingMode>("create");
   const [roomName, setRoomName] = useState("");
   const [profile, setProfile] = useState<ProfileDraft>({
@@ -46,6 +39,14 @@ export function LandingPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const previewPeople = [
+    { name: tr("Laura", "Лера"), tone: "violet" },
+    { name: tr("Michael", "Миша"), tone: "blue" },
+    { name: tr("Tanya", "Таня"), tone: "sand" },
+    { name: tr("Kostya", "Костя"), tone: "mint" },
+    { name: tr("Anna", "Аня"), tone: "coral" },
+    { name: tr("Sergey", "Сергей"), tone: "slate" },
+  ];
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -83,7 +84,10 @@ export function LandingPage() {
       setError(
         caughtError instanceof RoomApiError
           ? caughtError.message
-          : "Не удалось связаться с сервером комнат.",
+          : tr(
+              "Could not reach the room server.",
+              "Не удалось связаться с сервером комнат.",
+            ),
       );
       setIsBusy(false);
     }
@@ -98,24 +102,44 @@ export function LandingPage() {
     <main className={styles.page}>
       <header className={styles.header}>
         <Brand />
-        <span className={styles.headerNote}>
-          Спокойные видеовстречи для компьютера
-        </span>
+        <div
+          aria-label={tr("Language", "Язык")}
+          className={styles.languageToggle}
+        >
+          <button
+            aria-label="Русский"
+            aria-pressed={locale === "ru"}
+            className={locale === "ru" ? styles.languageActive : ""}
+            onClick={() => setLocale("ru")}
+            type="button"
+          >
+            RU
+          </button>
+          <button
+            aria-label="English"
+            aria-pressed={locale === "en"}
+            className={locale === "en" ? styles.languageActive : ""}
+            onClick={() => setLocale("en")}
+            type="button"
+          >
+            EN
+          </button>
+        </div>
       </header>
 
       <section className={styles.hero}>
         <div className={styles.copy}>
           <div className={styles.eyebrow}>
             <span className={styles.eyebrowDot} />
-            Простой клиент поверх Jitsi
+            {tr("A simple client for Jitsi", "Простой клиент поверх Jitsi")}
           </div>
-          <h1>
-            <span>Проще</span>
-            <span>некуда</span>
-          </h1>
+          <h1>{tr("Couldn't be simpler", "Проще некуда")}</h1>
 
           <form className={styles.form} onSubmit={(event) => void submit(event)}>
-            <div aria-label="Действие с комнатой" className={styles.modeSwitch}>
+            <div
+              aria-label={tr("Room action", "Действие с комнатой")}
+              className={styles.modeSwitch}
+            >
               <button
                 aria-pressed={mode === "create"}
                 className={mode === "create" ? styles.modeActive : ""}
@@ -123,7 +147,7 @@ export function LandingPage() {
                 type="button"
               >
                 <Plus size={15} />
-                Создать
+                {tr("Create", "Создать")}
               </button>
               <button
                 aria-pressed={mode === "join"}
@@ -132,18 +156,21 @@ export function LandingPage() {
                 type="button"
               >
                 <LogIn size={15} />
-                Войти по коду
+                {tr("Join with a code", "Войти по коду")}
               </button>
             </div>
 
             {mode === "join" && (
               <label className={styles.field}>
-                <span>Код комнаты</span>
+                <span>{tr("Room code", "Код комнаты")}</span>
                 <input
-                  aria-label="Код комнаты"
+                  aria-label={tr("Room code", "Код комнаты")}
                   autoComplete="off"
                   onChange={(event) => setRoomName(event.target.value)}
-                  placeholder="Например, quiet-studio-04210"
+                  placeholder={tr(
+                    "For example, quiet-studio-04210",
+                    "Например, quiet-studio-04210",
+                  )}
                   spellCheck={false}
                   value={roomName}
                 />
@@ -154,16 +181,19 @@ export function LandingPage() {
 
             <label className={styles.field}>
               <span className={styles.passwordLabel}>
-                Пароль
-                <em>необязательно</em>
+                {tr("Password", "Пароль")}
+                <em>{tr("optional", "необязательно")}</em>
               </span>
               <div className={styles.inputWithIcon}>
                 <LockKeyhole size={17} />
                 <input
-                  aria-label="Пароль комнаты"
+                  aria-label={tr("Room password", "Пароль комнаты")}
                   autoComplete="off"
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Оставьте пустым для открытой комнаты"
+                  placeholder={tr(
+                    "Leave empty for an open room",
+                    "Оставьте пустым для открытой комнаты",
+                  )}
                   type="password"
                   value={password}
                 />
@@ -183,10 +213,10 @@ export function LandingPage() {
             >
               <span>
                 {isBusy
-                  ? "Связываемся с сервером"
+                  ? tr("Connecting to the server", "Связываемся с сервером")
                   : mode === "create"
-                    ? "Создать комнату"
-                    : "Войти в комнату"}
+                    ? tr("Create room", "Создать комнату")
+                    : tr("Join room", "Войти в комнату")}
               </span>
               {isBusy ? (
                 <LoaderCircle className={styles.spinner} size={18} />
@@ -199,11 +229,11 @@ export function LandingPage() {
           <div className={styles.assurances}>
             <span>
               <ShieldCheck size={16} />
-              Без регистрации
+              {tr("No registration", "Без регистрации")}
             </span>
             <span>
               <Video size={16} />
-              Код выдаёт сервер
+              {tr("Server-issued room code", "Код выдаёт сервер")}
             </span>
           </div>
         </div>
@@ -215,7 +245,7 @@ export function LandingPage() {
               <span className={styles.previewRoom}>small-studio-24</span>
               <span className={styles.previewLive}>
                 <i />
-                6 в комнате
+                {tr("6 in the room", "6 в комнате")}
               </span>
             </div>
             <div className={styles.previewWorkspace}>
@@ -235,26 +265,31 @@ export function LandingPage() {
               <aside className={styles.previewChat}>
                 <header>
                   <MessageCircle size={13} />
-                  <strong>Чат</strong>
+                  <strong>{tr("Chat", "Чат")}</strong>
                 </header>
                 <div className={styles.previewMessages}>
                   <article>
-                    <i>Л</i>
+                    <i>{tr("L", "Л")}</i>
                     <div>
-                      <strong>Лера</strong>
-                      <p>Всем видно экран?</p>
+                      <strong>{tr("Laura", "Лера")}</strong>
+                      <p>
+                        {tr(
+                          "Can everyone see my screen?",
+                          "Всем видно экран?",
+                        )}
+                      </p>
                     </div>
                   </article>
                   <article>
-                    <i>М</i>
+                    <i>{tr("M", "М")}</i>
                     <div>
-                      <strong>Миша</strong>
-                      <p>Да, всё отлично.</p>
+                      <strong>{tr("Michael", "Миша")}</strong>
+                      <p>{tr("Yes, looks great.", "Да, всё отлично.")}</p>
                     </div>
                   </article>
                 </div>
                 <div className={styles.previewComposer}>
-                  <span>Сообщение…</span>
+                  <span>{tr("Message…", "Сообщение…")}</span>
                   <Send size={11} />
                 </div>
               </aside>
@@ -267,7 +302,9 @@ export function LandingPage() {
               <span className={styles.previewHangup}><PhoneOff size={17} /></span>
             </div>
           </div>
-          <p className={styles.previewCaption}>Всё перед глазами</p>
+          <p className={styles.previewCaption}>
+            {tr("Everything in sight", "Всё перед глазами")}
+          </p>
         </div>
       </section>
     </main>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Camera, Check, ChevronDown, Mic, Settings, Sparkles, X } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import styles from "./SettingsPanel.module.css";
 
 interface SettingsPanelProps {
@@ -33,6 +34,7 @@ export function SettingsPanel({
   onVideoInputChange,
   videoInputId,
 }: SettingsPanelProps) {
+  const { tr } = useI18n();
   const [open, setOpen] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -90,17 +92,17 @@ export function SettingsPanel({
     <div className={styles.root} ref={panelRef}>
       {open && (
         <section
-          aria-label="Настройки устройств"
+          aria-label={tr("Device settings", "Настройки устройств")}
           className={styles.panel}
           role="dialog"
         >
           <header>
             <div>
-              <span>Настройки</span>
-              <small>Устройства этой встречи</small>
+              <span>{tr("Settings", "Настройки")}</span>
+              <small>{tr("Meeting devices", "Устройства этой встречи")}</small>
             </div>
             <button
-              aria-label="Закрыть настройки"
+              aria-label={tr("Close settings", "Закрыть настройки")}
               onClick={() => setOpen(false)}
               type="button"
             >
@@ -111,21 +113,27 @@ export function SettingsPanel({
           <label className={styles.selectField}>
             <span>
               <Mic size={14} />
-              Микрофон
+              {tr("Microphone", "Микрофон")}
             </span>
             <div>
               <select
-                aria-label="Выбрать микрофон"
+                aria-label={tr("Select microphone", "Выбрать микрофон")}
                 disabled={busy || microphones.length === 0}
                 onChange={(event) =>
                   void onAudioInputChange(event.target.value)
                 }
                 value={audioInputId}
               >
-                <option value="">Системный по умолчанию</option>
+                <option value="">
+                  {tr("System default", "Системный по умолчанию")}
+                </option>
                 {microphones.map((device, index) => (
                   <option key={device.deviceId} value={device.deviceId}>
-                    {deviceLabel(device, index, "Микрофон")}
+                    {deviceLabel(
+                      device,
+                      index,
+                      tr("Microphone", "Микрофон"),
+                    )}
                   </option>
                 ))}
               </select>
@@ -136,21 +144,27 @@ export function SettingsPanel({
           <label className={styles.selectField}>
             <span>
               <Camera size={14} />
-              Камера
+              {tr("Camera", "Камера")}
             </span>
             <div>
               <select
-                aria-label="Выбрать камеру"
+                aria-label={tr("Select camera", "Выбрать камеру")}
                 disabled={busy || cameras.length === 0}
                 onChange={(event) =>
                   void onVideoInputChange(event.target.value)
                 }
                 value={videoInputId}
               >
-                <option value="">Системная по умолчанию</option>
+                <option value="">
+                  {tr("System default", "Системная по умолчанию")}
+                </option>
                 {cameras.map((device, index) => (
                   <option key={device.deviceId} value={device.deviceId}>
-                    {deviceLabel(device, index, "Камера")}
+                    {deviceLabel(
+                      device,
+                      index,
+                      tr("Camera", "Камера"),
+                    )}
                   </option>
                 ))}
               </select>
@@ -163,16 +177,19 @@ export function SettingsPanel({
               <Sparkles size={15} />
             </span>
             <div>
-              <strong>Шумоподавление</strong>
+              <strong>{tr("Noise suppression", "Шумоподавление")}</strong>
               <small>
                 {noiseSuppressionSupported
-                  ? "RNNoise из Jitsi Meet"
-                  : "Не поддерживается браузером"}
+                  ? tr("RNNoise from Jitsi Meet", "RNNoise из Jitsi Meet")
+                  : tr(
+                      "Not supported by this browser",
+                      "Не поддерживается браузером",
+                    )}
               </small>
             </div>
             <button
               aria-checked={noiseSuppressionEnabled}
-              aria-label="Шумоподавление"
+              aria-label={tr("Noise suppression", "Шумоподавление")}
               className={noiseSuppressionEnabled ? styles.toggleOn : ""}
               disabled={busy || !noiseSuppressionSupported}
               onClick={() =>
@@ -189,10 +206,10 @@ export function SettingsPanel({
 
       <button
         aria-expanded={open}
-        aria-label="Настройки"
+        aria-label={tr("Settings", "Настройки")}
         className={styles.trigger}
         onClick={() => setOpen((current) => !current)}
-        title="Настройки"
+        title={tr("Settings", "Настройки")}
         type="button"
       >
         <Settings size={20} />
