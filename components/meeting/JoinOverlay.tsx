@@ -43,6 +43,7 @@ export function JoinOverlay({
     profileId: initialDetails.profileId,
   });
   const [password, setPassword] = useState(initialDetails.password);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [startAudioMuted, setStartAudioMuted] = useState(
     initialDetails.startAudioMuted,
   );
@@ -63,6 +64,7 @@ export function JoinOverlay({
     void onJoin({
       avatarDataUrl: savedProfile.avatarDataUrl,
       displayName: savedProfile.displayName,
+      isCreator: initialDetails.isCreator,
       password,
       profileId: savedProfile.id,
       startAudioMuted,
@@ -122,7 +124,20 @@ export function JoinOverlay({
                 <em>{tr("if set", "если установлен")}</em>
               </span>
               <div className={styles.passwordField}>
-                <LockKeyhole size={16} />
+                <button
+                  aria-label={tr(
+                    "Hold to show password",
+                    "Удерживайте, чтобы показать пароль",
+                  )}
+                  onBlur={() => setPasswordVisible(false)}
+                  onPointerCancel={() => setPasswordVisible(false)}
+                  onPointerDown={() => setPasswordVisible(true)}
+                  onPointerLeave={() => setPasswordVisible(false)}
+                  onPointerUp={() => setPasswordVisible(false)}
+                  type="button"
+                >
+                  <LockKeyhole size={16} />
+                </button>
                 <input
                   autoComplete="off"
                   onChange={(event) => setPassword(event.target.value)}
@@ -130,7 +145,7 @@ export function JoinOverlay({
                     "You can leave this empty",
                     "Можно оставить пустым",
                   )}
-                  type="password"
+                  type={passwordVisible ? "text" : "password"}
                   value={password}
                 />
               </div>

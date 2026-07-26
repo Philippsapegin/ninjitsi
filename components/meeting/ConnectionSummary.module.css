@@ -143,6 +143,18 @@
   height: 13px;
 }
 
-.strength i.filled {
+.strength.level4 i.filled {
   background: var(--accent);
+}
+
+.strength.level3 i.filled {
+  background: #f0cf58;
+}
+
+.strength.level2 i.filled {
+  background: #ff9c43;
+}
+
+.strength.level1 i.filled {
+  background: #ff625c;
 }

@@ -67,8 +67,18 @@ export function ProfileEditor({
       const selected = readSelectedProfile();
 
       setProfiles(savedProfiles);
-      if (!value.profileId && !value.displayName && selected) {
+      const currentProfileExists = savedProfiles.some(
+        (profile) => profile.id === value.profileId,
+      );
+
+      if (selected && !currentProfileExists) {
         onChange(profileToDraft(selected));
+      } else if (savedProfiles.length === 0 && !value.profileId) {
+        onChange({
+          avatarDataUrl: "",
+          displayName: "",
+          profileId: "",
+        });
       }
     });
   }, [onChange, value.displayName, value.profileId]);
@@ -117,7 +127,7 @@ export function ProfileEditor({
   }
 
   return (
-    <section className={styles.editor}>
+    <section className={styles.editor} data-profile-editor>
       <div className={styles.heading}>
         <span>{tr("Profile", "Профиль")}</span>
         <button

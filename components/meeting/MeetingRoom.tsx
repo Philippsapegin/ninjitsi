@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -13,12 +13,16 @@ import {
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
 import { useCallTimer } from "@/hooks/useCallTimer";
-import { useI18n } from "@/lib/i18n";
+import { getStoredLocale, localize, useI18n } from "@/lib/i18n";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
-import { readPendingJoin } from "@/lib/room";
+import {
+  readCreatedRoomPassword,
+  readPendingJoin,
+} from "@/lib/room";
 import { authorizeRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import { useRoomApiEnabled } from "@/lib/runtimeConfig";
+import { playNinjitsiSound } from "@/lib/sounds";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
 import { ChatSidebar } from "./ChatSidebar";
@@ -31,6 +35,7 @@ import styles from "./MeetingRoom.module.css";
 const EMPTY_JOIN_DETAILS: JoinOptions = {
   avatarDataUrl: "",
   displayName: "",
+  isCreator: false,
   password: "",
   profileId: "",
   startAudioMuted: false,
@@ -68,6 +73,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     status: "checking",
     error: null,
   });
+  const participantSoundReadyRef = useRef(false);
+  const previousRemoteParticipantIdsRef = useRef<Set<string>>(new Set());
+  const creatorEntrySoundPlayedRef = useRef(false);
   const callIsActive =
     conference.status === "joined" ||
     conference.status === "reconnecting";
@@ -134,20 +142,68 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   }, [callIsActive]);
 
   useEffect(() => {
+    if (conference.status !== "joined") {
+      if (conference.status === "idle" || conference.status === "left") {
+        participantSoundReadyRef.current = false;
+        previousRemoteParticipantIdsRef.current = new Set();
+      }
+      return;
+    }
+
+    const currentRemoteIds = new Set(
+      conference.participants
+        .filter((participant) => !participant.isLocal)
+        .map((participant) => participant.id),
+    );
+
+    if (!participantSoundReadyRef.current) {
+      participantSoundReadyRef.current = true;
+      previousRemoteParticipantIdsRef.current = currentRemoteIds;
+      return;
+    }
+
+    const previousRemoteIds = previousRemoteParticipantIdsRef.current;
+
+    for (const participantId of currentRemoteIds) {
+      if (!previousRemoteIds.has(participantId)) {
+        playNinjitsiSound("connect");
+      }
+    }
+    for (const participantId of previousRemoteIds) {
+      if (!currentRemoteIds.has(participantId)) {
+        playNinjitsiSound("disconnect");
+      }
+    }
+
+    previousRemoteParticipantIdsRef.current = currentRemoteIds;
+  }, [conference.participants, conference.status]);
+
+  useEffect(() => {
+    if (
+      conference.status === "joined" &&
+      joinDetails.isCreator &&
+      !creatorEntrySoundPlayedRef.current
+    ) {
+      creatorEntrySoundPlayedRef.current = true;
+      playNinjitsiSound("initialRoomEnter");
+    }
+  }, [conference.status, joinDetails.isCreator]);
+
+  useEffect(() => {
     queueMicrotask(() => {
       const pending = readPendingJoin();
-      const rememberedName =
-        localStorage.getItem("ninjitsi.displayName") ?? "";
+      const creatorPassword = readCreatedRoomPassword(roomName);
 
       setJoinDetails(
         pending ?? {
           ...EMPTY_JOIN_DETAILS,
-          displayName: rememberedName,
+          isCreator: creatorPassword !== null,
+          password: creatorPassword ?? "",
         },
       );
       setJoinDetailsReady(true);
     });
-  }, []);
+  }, [roomName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,7 +245,8 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           error:
             caughtError instanceof RoomApiError
               ? caughtError.message
-              : tr(
+              : localize(
+                  getStoredLocale(),
                   "Could not verify the room with the server.",
                   "Не удалось проверить комнату на сервере.",
                 ),
@@ -199,7 +256,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     return () => {
       cancelled = true;
     };
-  }, [roomApiEnabled, roomCheckAttempt, roomName, tr]);
+  }, [roomApiEnabled, roomCheckAttempt, roomName]);
 
   const participantLabel = useMemo(() => {
     const count = conference.participants.length;
@@ -230,7 +287,6 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       setProtectedRoom(Boolean(details.password));
     }
 
-    localStorage.setItem("ninjitsi.displayName", details.displayName);
     setAdmissionError("");
     setIsAdmissionBusy(true);
 
@@ -365,6 +421,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             onAudioInputChange={conference.setAudioInputDevice}
             onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
             onVideoInputChange={conference.setVideoInputDevice}
+            roomPassword={
+              joinDetails.isCreator ? joinDetails.password : null
+            }
             videoInputId={conference.videoInputId}
           />
           <button

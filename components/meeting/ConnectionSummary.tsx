@@ -29,7 +29,7 @@ function ConnectionStrength({ quality }: { quality: number | null }) {
           ? tr("Connection strength unknown", "Сила соединения неизвестна")
           : `${tr("Connection", "Соединение")} ${quality}%`
       }
-      className={styles.strength}
+      className={`${styles.strength} ${styles[`level${level}`]}`}
       title={
         quality === null ? tr("No data", "Нет данных") : `${quality}%`
       }

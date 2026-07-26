@@ -69,6 +69,22 @@
   color: var(--accent);
 }
 
+.tabUnread {
+  color: var(--accent);
+  animation: unread-glow 1.8s ease-in-out infinite;
+  box-shadow:
+    0 0 0 1px rgba(216, 255, 99, 0.28),
+    0 0 20px rgba(216, 255, 99, 0.28);
+}
+
+@keyframes unread-glow {
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(216, 255, 99, 0.5),
+      0 0 28px rgba(216, 255, 99, 0.48);
+  }
+}
+
 .panel > header {
   display: flex;
   height: 54px;
@@ -146,9 +162,11 @@
 }
 
 .messages > article {
+  position: relative;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 9px;
+  cursor: pointer;
 }
 
 .messageAvatar {
@@ -207,6 +225,63 @@
 
 .messages article.localMessage p {
   color: var(--text);
+}
+
+.replyQuote {
+  display: flex;
+  margin: 0 0 6px;
+  padding: 6px 7px;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  background: rgba(216, 255, 99, 0.055);
+  border-radius: 6px;
+}
+
+.replyQuote strong {
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replyQuote span {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageActions {
+  position: absolute;
+  z-index: 7;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  padding: 4px;
+  gap: 3px;
+  background: rgba(29, 34, 40, 0.99);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.42);
+}
+
+.messageActions button {
+  height: 27px;
+  padding: 0 8px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 680;
+}
+
+.messageActions button:hover {
+  color: var(--accent);
+  background: rgba(216, 255, 99, 0.06);
 }
 
 .privateMessage {
@@ -281,6 +356,57 @@
   gap: 6px;
   background: transparent;
   border: 0;
+}
+
+.replyContext {
+  display: grid;
+  padding: 7px 8px;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  gap: 6px;
+  align-items: center;
+  background: rgba(216, 255, 99, 0.055);
+  border-radius: 8px;
+}
+
+.replyContext > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.replyContext strong,
+.replyContext span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replyContext strong {
+  color: var(--accent);
+  font-size: 8px;
+}
+
+.replyContext span {
+  color: var(--text-faint);
+  font-size: 8px;
+}
+
+.replyContext > button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.replyContext > button:hover {
+  color: var(--text);
 }
 
 .recipientPicker {

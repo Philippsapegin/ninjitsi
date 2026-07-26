@@ -28,6 +28,62 @@ const forceJvb = process.env.NINJITSI_FORCE_JVB === "1";
 const allowTransportRecoveryErrors =
   process.env.NINJITSI_ALLOW_TRANSPORT_RECOVERY_ERRORS === "1";
 
+function installSoundProbe() {
+  const originalPlay = HTMLMediaElement.prototype.play;
+
+  window.__ninjitsiPlayedSounds = [];
+  HTMLMediaElement.prototype.play = function play() {
+    const source = this.currentSrc || this.src;
+
+    if (source.includes("/Sounds/")) {
+      window.__ninjitsiPlayedSounds.push(
+        new URL(source, window.location.href).pathname,
+      );
+      queueMicrotask(() => this.dispatchEvent(new Event("ended")));
+      return Promise.resolve();
+    }
+
+    return originalPlay.call(this);
+  };
+}
+
+async function waitForSound(soundPage, filename, count = 1) {
+  await soundPage.waitForFunction(
+    ({ expectedCount, expectedFilename }) =>
+      (window.__ninjitsiPlayedSounds ?? []).filter((source) =>
+        source.endsWith(expectedFilename),
+      ).length >= expectedCount,
+    { expectedCount: count, expectedFilename: filename },
+    { timeout: 30_000 },
+  );
+}
+
+async function assertTwoParticipantRowDuring(page, buttonName) {
+  await page.getByRole("button", { name: buttonName }).click();
+
+  for (let sample = 0; sample < 8; sample += 1) {
+    await page.waitForTimeout(50);
+    const tilePositions = await page.locator("[data-video-tile]").evaluateAll(
+      (tiles) =>
+        tiles.map((tile) => {
+          const rect = tile.getBoundingClientRect();
+
+          return { left: rect.left, top: rect.top };
+        }),
+    );
+
+    if (
+      tilePositions.length === 2 &&
+      (Math.abs(tilePositions[0].top - tilePositions[1].top) > 2 ||
+        Math.abs(tilePositions[0].left - tilePositions[1].left) < 2)
+    ) {
+      throw new Error(
+        `Чат перестроил две видеоплитки в колонку: ${JSON.stringify(tilePositions)}`,
+      );
+    }
+  }
+}
+
 if (!jitsiUrl) {
   throw new Error(
     "Укажите NINJITSI_JITSI_URL с адресом проверяемого Jitsi-сервера.",
@@ -92,6 +148,7 @@ page.on("pageerror", (pageError) => {
 });
 
 try {
+  await page.addInitScript(installSoundProbe);
   await page.addInitScript(() => {
     const originalGetUserMedia =
       navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -182,6 +239,7 @@ try {
 
   const observerPage = await context.newPage();
 
+  await observerPage.addInitScript(installSoundProbe);
   observerPage.on("console", (message) => {
     if (message.type() === "error") {
       browserErrors.push(`[observer] ${message.text()}`);
@@ -224,6 +282,7 @@ try {
     state: "attached",
     timeout: 30_000,
   });
+  await waitForSound(page, "Nin.Connect.wav");
 
   for (const [clientName, clientPage] of [
     ["publisher", page],
@@ -290,6 +349,18 @@ try {
   }
   const chatReply = `Ответ ${Date.now()}`;
 
+  const sourceMessage = observerPage
+    .locator("article")
+    .filter({ hasText: chatProbe });
+
+  await sourceMessage.click();
+  await sourceMessage
+    .getByRole("group", { name: "Действия с сообщением" })
+    .getByRole("button", { name: "Ответить" })
+    .click();
+  await observerPage
+    .getByText("Ответ для Ninjitsi Smoke", { exact: true })
+    .waitFor();
   await observerPage.getByLabel("Сообщение в чат").fill(chatReply);
   await observerPage
     .getByRole("button", { name: "Отправить сообщение" })
@@ -297,9 +368,15 @@ try {
   await page
     .getByText(chatReply, { exact: true })
     .waitFor({ timeout: 30_000 });
+  await page
+    .locator("article")
+    .filter({ hasText: chatReply })
+    .getByText(chatProbe, { exact: true })
+    .waitFor();
 
   const bystanderPage = await context.newPage();
 
+  await bystanderPage.addInitScript(installSoundProbe);
   bystanderPage.on("console", (message) => {
     if (message.type() === "error") {
       browserErrors.push(`[bystander] ${message.text()}`);
@@ -332,6 +409,65 @@ try {
     .getByRole("button", {
       name: "Показать на сцене Remote Observer",
     })
+    .waitFor({ timeout: 30_000 });
+  await waitForSound(page, "Nin.Connect.wav", 2);
+
+  const onlyToSource = `Источник only-to ${Date.now()}`;
+  const onlyToProbe = `Только для автора ${Date.now()}`;
+
+  await observerPage.getByLabel("Сообщение в чат").fill(onlyToSource);
+  await observerPage
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  await page
+    .getByText(onlyToSource, { exact: true })
+    .waitFor({ timeout: 30_000 });
+  await bystanderPage
+    .getByText(onlyToSource, { exact: true })
+    .waitFor({ timeout: 30_000 });
+  const onlyToSourceMessage = page
+    .locator("article")
+    .filter({ hasText: onlyToSource });
+
+  await onlyToSourceMessage.click();
+  await onlyToSourceMessage
+    .getByRole("group", { name: "Действия с сообщением" })
+    .getByRole("button", { name: "Только ему" })
+    .click();
+  await page.getByLabel("Сообщение в чат").fill(onlyToProbe);
+  await page
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  await observerPage
+    .getByText(onlyToProbe, { exact: true })
+    .waitFor({ timeout: 30_000 });
+  await bystanderPage.waitForTimeout(1_500);
+  if (
+    (await bystanderPage.getByText(onlyToProbe, { exact: true }).count()) !== 0
+  ) {
+    throw new Error("Only-to сообщение увидел невыбранный участник");
+  }
+  await page
+    .getByLabel("Выбрать получателей сообщения")
+    .getByText("Всем", { exact: true })
+    .waitFor();
+
+  await page.getByRole("button", { name: "Свернуть чат" }).click();
+  const collapsedProbe = `Непрочитанное ${Date.now()}`;
+
+  await observerPage.getByLabel("Сообщение в чат").fill(collapsedProbe);
+  await observerPage
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  const unreadTab = page.getByRole("button", {
+    name: /Развернуть чат: 1 непрочитанных/,
+  });
+
+  await unreadTab.waitFor({ timeout: 30_000 });
+  await waitForSound(page, "Nin.Message.wav");
+  await unreadTab.click();
+  await page
+    .getByRole("button", { name: "Свернуть чат" })
     .waitFor({ timeout: 30_000 });
 
   const privateProbe = `Личное сообщение ${Date.now()}`;
@@ -367,6 +503,22 @@ try {
     .getByRole("button", { name: /Всем участникам/ })
     .click();
   await bystanderPage.close();
+  await waitForSound(page, "Nin.Disconnect.wav");
+
+  await page.locator("[data-video-tile]").nth(1).waitFor({ timeout: 30_000 });
+  await page.waitForFunction(
+    () => document.querySelectorAll("[data-video-tile]").length === 2,
+    undefined,
+    { timeout: 30_000 },
+  );
+  await assertTwoParticipantRowDuring(page, "Свернуть чат");
+  await page
+    .getByRole("button", { name: "Развернуть чат" })
+    .waitFor({ timeout: 30_000 });
+  await assertTwoParticipantRowDuring(page, "Развернуть чат");
+  await page
+    .getByRole("button", { name: "Свернуть чат" })
+    .waitFor({ timeout: 30_000 });
 
   const attachmentName = `drop-${Date.now()}.txt`;
   const dataTransfer = await page.evaluateHandle((name) => {
@@ -717,16 +869,21 @@ try {
           avatarPropagation: "passed",
           attachments: "ephemeral drag-and-drop passed",
           imagePreview: "clickable transparent PNG passed",
-          chat: "bidirectional transport passed",
+          chat: "bidirectional transport and reply quoting passed",
+          chatUnread: "collapsed glow and message sound passed",
           privateChat: "selected recipients only passed",
+          messageOnlyTo:
+            "clicked sender only and recipient reset passed",
           connectionStats: "conference RTT passed",
           deviceSettings: "enumeration passed",
+          gridDuringChat: "two-participant row remained stable",
           microphone: "toggle passed",
           microphoneDefault: "explicit default device passed",
           microphoneLevel: "reactive outline passed",
           ownAudioPlayback: "not attached",
           participantVolume: "0–200% local gain passed",
           noiseSuppression: "toggle passed",
+          participantSounds: "connect and disconnect passed",
           remotePropagation: "passed",
           recoveryAfterInitialDenial: "passed",
           screenShare: "start/stop passed",

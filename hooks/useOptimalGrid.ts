@@ -20,6 +20,7 @@ function calculateGrid(
   width: number,
   height: number,
   itemCount: number,
+  topologyWidth = width,
 ): GridMetrics {
   if (!width || !height || !itemCount) {
     return EMPTY_METRICS;
@@ -28,10 +29,12 @@ function calculateGrid(
   const gap = itemCount > 12 ? 8 : itemCount > 6 ? 10 : 12;
   let best = EMPTY_METRICS;
   let bestArea = 0;
+  const layoutWidth = Math.max(width, topologyWidth);
 
   for (let columns = 1; columns <= itemCount; columns += 1) {
     const rows = Math.ceil(itemCount / columns);
-    const widthByColumns = (width - gap * (columns - 1)) / columns;
+    const widthByColumns =
+      (layoutWidth - gap * (columns - 1)) / columns;
     const heightFromWidth = widthByColumns * (9 / 16);
     const heightByRows = (height - gap * (rows - 1)) / rows;
     const tileHeight = Math.min(heightFromWidth, heightByRows);
@@ -56,7 +59,22 @@ function calculateGrid(
     }
   }
 
-  return best;
+  const stableColumns = itemCount === 2 ? 2 : best.columns;
+  const rows = Math.ceil(itemCount / stableColumns);
+  const widthByColumns =
+    (width - gap * (stableColumns - 1)) / stableColumns;
+  const heightByRows = (height - gap * (rows - 1)) / rows;
+  const fittedWidth = Math.max(
+    0,
+    Math.floor(Math.min(widthByColumns, heightByRows * (16 / 9))),
+  );
+
+  return {
+    columns: stableColumns,
+    gap,
+    tileHeight: fittedWidth * (9 / 16),
+    tileWidth: fittedWidth,
+  };
 }
 
 export function useOptimalGrid(
@@ -87,6 +105,7 @@ export function useOptimalGrid(
           bounds.width - horizontalPadding,
           bounds.height - verticalPadding,
           itemCount,
+          document.documentElement.clientWidth - horizontalPadding,
         ),
       );
     };

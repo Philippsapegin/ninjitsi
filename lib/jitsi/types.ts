@@ -122,10 +122,17 @@ export interface ChatMessage {
   isPrivate?: boolean;
   isLocal: boolean;
   recipientNames?: string[];
+  replyTo?: ChatReplyReference;
   senderId: string;
   senderName: string;
   text: string;
   timestamp: number;
+}
+
+export interface ChatReplyReference {
+  messageId: string;
+  senderName: string;
+  text: string;
 }
 
 export interface ChatAttachment {

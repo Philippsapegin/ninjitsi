@@ -134,6 +134,120 @@
   align-items: center;
 }
 
+.languageRow {
+  display: grid;
+  grid-template-columns: 31px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.languageRow > div:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.languageRow strong {
+  font-size: 11px;
+  font-weight: 670;
+}
+
+.languageRow small {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.languageButtons {
+  display: flex;
+  gap: 5px;
+}
+
+.languageButtons > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  color: var(--text-faint);
+  background: #30363d;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 8px;
+  font-weight: 760;
+}
+
+.languageButtons > button:hover {
+  color: var(--accent);
+}
+
+.languageButtons > button.languageSelected {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.creatorPassword {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.creatorPassword > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.creatorPassword > div {
+  position: relative;
+}
+
+.creatorPassword input {
+  width: 100%;
+  height: 43px;
+  padding: 0 12px 0 41px;
+  outline: none;
+  color: var(--text);
+  background: #0c0f13;
+  border: 0;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.creatorPassword input::placeholder {
+  color: var(--text-faint);
+}
+
+.creatorPassword button {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 12px;
+  display: grid;
+  width: 20px;
+  padding: 0;
+  place-items: center;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.creatorPassword button:hover:not(:disabled),
+.creatorPassword button:active:not(:disabled) {
+  color: var(--accent);
+}
+
+.creatorPassword button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .toggleIcon {
   display: grid;
   width: 31px;

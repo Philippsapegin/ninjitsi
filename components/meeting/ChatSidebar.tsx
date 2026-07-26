@@ -26,14 +26,20 @@ import type {
   ChatAttachment,
   ChatMessage,
   ParticipantView,
+  ChatReplyReference,
 } from "@/lib/jitsi/types";
+import { playNinjitsiSound } from "@/lib/sounds";
 import styles from "./ChatSidebar.module.css";
 
 interface ChatSidebarProps {
   disabled: boolean;
   isSendingAttachment: boolean;
   messages: ChatMessage[];
-  onSend: (text: string, recipientIds?: string[]) => void;
+  onSend: (
+    text: string,
+    recipientIds?: string[],
+    replyTo?: ChatReplyReference,
+  ) => void;
   onSendAttachment: (
     file: File,
     recipientIds?: string[],
@@ -117,6 +123,11 @@ export function ChatSidebar({
   const [open, setOpen] = useState(true);
   const [dragActive, setDragActive] = useState(false);
   const [recipientMenuOpen, setRecipientMenuOpen] = useState(false);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<ChatReplyReference | undefined>();
+  const [resetRecipientsAfterSend, setResetRecipientsAfterSend] =
+    useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [previewAttachment, setPreviewAttachment] =
     useState<ChatAttachment | null>(null);
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>(
@@ -125,6 +136,8 @@ export function ChatSidebar({
   const listRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recipientPickerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previousMessageCountRef = useRef(messages.length);
   const remoteParticipants = participants.filter(
     (participant) => !participant.isLocal,
   );
@@ -140,6 +153,19 @@ export function ChatSidebar({
       top: listRef.current.scrollHeight,
     });
   }, [messages]);
+
+  useEffect(() => {
+    const previousCount = previousMessageCountRef.current;
+    const addedCount = Math.max(0, messages.length - previousCount);
+
+    previousMessageCountRef.current = messages.length;
+    if (!open && addedCount > 0) {
+      setUnreadCount((current) => current + addedCount);
+      for (let index = 0; index < addedCount; index += 1) {
+        playNinjitsiSound("message");
+      }
+    }
+  }, [messages, open]);
 
   useEffect(() => {
     if (!recipientMenuOpen) {
@@ -170,8 +196,15 @@ export function ChatSidebar({
     onSend(
       draft,
       selectedRecipients.map((participant) => participant.id),
+      replyTo,
     );
     setDraft("");
+    setReplyTo(undefined);
+    setActiveMessageId(null);
+    if (resetRecipientsAfterSend) {
+      setSelectedRecipientIds([]);
+      setResetRecipientsAfterSend(false);
+    }
   }
 
   async function sendFiles(files: File[]) {
@@ -180,20 +213,58 @@ export function ChatSidebar({
     }
 
     setOpen(true);
+    setUnreadCount(0);
     for (const file of files.slice(0, 5)) {
       await onSendAttachment(
         file,
         selectedRecipients.map((participant) => participant.id),
       );
     }
+    if (resetRecipientsAfterSend) {
+      setSelectedRecipientIds([]);
+      setResetRecipientsAfterSend(false);
+    }
   }
 
   function toggleRecipient(participantId: string) {
+    setResetRecipientsAfterSend(false);
     setSelectedRecipientIds((current) =>
       current.includes(participantId)
         ? current.filter((id) => id !== participantId)
         : [...current, participantId],
     );
+  }
+
+  function replyToMessage(message: ChatMessage) {
+    const fallbackText =
+      message.attachments?.map((attachment) => attachment.name).join(", ") ||
+      tr("Attachment", "Вложение");
+
+    setReplyTo({
+      messageId: message.id,
+      senderName: message.senderName,
+      text: (message.text || fallbackText).slice(0, 320),
+    });
+    setActiveMessageId(null);
+    queueMicrotask(() => textareaRef.current?.focus());
+  }
+
+  function sendOnlyTo(message: ChatMessage) {
+    if (
+      message.isLocal ||
+      !remoteParticipants.some(
+        (participant) => participant.id === message.senderId,
+      )
+    ) {
+      return;
+    }
+
+    setSelectedRecipientIds([message.senderId]);
+    setResetRecipientsAfterSend(true);
+    setRecipientMenuOpen(false);
+    setReplyTo(undefined);
+    setActiveMessageId(null);
+    queueMicrotask(() => textareaRef.current?.focus());
   }
 
   function chooseFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -232,9 +303,21 @@ export function ChatSidebar({
         onDrop={handleDrop}
       >
       <button
-        aria-label={tr("Expand chat", "Развернуть чат")}
-        className={styles.tab}
-        onClick={() => setOpen(true)}
+        aria-label={
+          unreadCount > 0
+            ? `${tr("Expand chat", "Развернуть чат")}: ${unreadCount} ${tr(
+                "unread",
+                "непрочитанных",
+              )}`
+            : tr("Expand chat", "Развернуть чат")
+        }
+        className={`${styles.tab} ${
+          unreadCount > 0 ? styles.tabUnread : ""
+        }`}
+        onClick={() => {
+          setOpen(true);
+          setUnreadCount(0);
+        }}
         type="button"
       >
         <MessageCircle size={17} />
@@ -276,7 +359,19 @@ export function ChatSidebar({
             messages.map((message) => (
               <article
                 className={message.isLocal ? styles.localMessage : ""}
+                data-chat-message={message.id}
                 key={message.id}
+                onClick={(event) => {
+                  if (
+                    event.target instanceof Element &&
+                    event.target.closest("button, a")
+                  ) {
+                    return;
+                  }
+                  setActiveMessageId((current) =>
+                    current === message.id ? null : message.id,
+                  );
+                }}
               >
                 <div className={styles.messageAvatar}>
                   {message.avatarUrl ? (
@@ -310,6 +405,12 @@ export function ChatSidebar({
                         : tr("Private message", "Личное сообщение")}
                     </span>
                   )}
+                  {message.replyTo && (
+                    <div className={styles.replyQuote}>
+                      <strong>{message.replyTo.senderName}</strong>
+                      <span>{message.replyTo.text}</span>
+                    </div>
+                  )}
                   {message.text && <p>{message.text}</p>}
                   {message.attachments?.map((attachment) => (
                     <Attachment
@@ -318,6 +419,33 @@ export function ChatSidebar({
                       onPreview={setPreviewAttachment}
                     />
                   ))}
+                  {activeMessageId === message.id && (
+                    <div
+                      aria-label={tr("Message actions", "Действия с сообщением")}
+                      className={styles.messageActions}
+                      onClick={(event) => event.stopPropagation()}
+                      role="group"
+                    >
+                      <button
+                        onClick={() => replyToMessage(message)}
+                        type="button"
+                      >
+                        {tr("Reply", "Ответить")}
+                      </button>
+                      {!message.isLocal &&
+                        remoteParticipants.some(
+                          (participant) =>
+                            participant.id === message.senderId,
+                        ) && (
+                          <button
+                            onClick={() => sendOnlyTo(message)}
+                            type="button"
+                          >
+                            {tr("Only to", "Только ему")}
+                          </button>
+                        )}
+                    </div>
+                  )}
                 </div>
               </article>
             ))
@@ -325,6 +453,23 @@ export function ChatSidebar({
         </div>
 
         <form className={styles.compose} onSubmit={submit}>
+          {replyTo && (
+            <div className={styles.replyContext}>
+              <div>
+                <strong>
+                  {tr("Reply to", "Ответ для")} {replyTo.senderName}
+                </strong>
+                <span>{replyTo.text}</span>
+              </div>
+              <button
+                aria-label={tr("Cancel reply", "Отменить ответ")}
+                onClick={() => setReplyTo(undefined)}
+                type="button"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
           <div className={styles.recipientPicker} ref={recipientPickerRef}>
             <button
               aria-expanded={recipientMenuOpen}
@@ -384,7 +529,10 @@ export function ChatSidebar({
                       ? styles.recipientSelected
                       : ""
                   }
-                  onClick={() => setSelectedRecipientIds([])}
+                  onClick={() => {
+                    setSelectedRecipientIds([]);
+                    setResetRecipientsAfterSend(false);
+                  }}
                   type="button"
                 >
                   <Users size={13} />
@@ -449,6 +597,7 @@ export function ChatSidebar({
                   : tr("Message…", "Сообщение…")
               }
               rows={1}
+              ref={textareaRef}
               value={draft}
             />
             <button

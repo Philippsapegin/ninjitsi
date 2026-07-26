@@ -285,8 +285,10 @@ Profiles and avatars stay only in that browser's local storage. Chat messages an
 - **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a large stage while the other participants form a row below.
 - **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API when the browser and Jitsi build support AudioWorklet.
 - **Private messages:** text or attachments can be addressed to one or more selected participants through Jitsi endpoint messages.
+- **Replies and meeting alerts:** click a message to reply with a quote or send only to its author; collapsed-chat messages glow and play an alert, while participant joins and departures have separate room sounds.
 - **Personal volume:** each remote participant can be adjusted locally from 0% to 200%; the setting changes only what the current client hears. Local microphone audio is never attached to the client's own output.
 - **Chat attachments:** drag-and-drop and file-picker delivery up to 2 MB per file; images open in an in-app preview and transparent PNGs retain their alpha channel. Attachments disappear with the conference.
+- **Bilingual interface:** English is the default; Russian and English can be switched on the home page or during a meeting.
 
 ## Technical checks
 
@@ -339,7 +341,7 @@ $env:NINJITSI_JITSI_URL = "http://localhost:8000"
 npm run smoke:jitsi
 ```
 
-The Jitsi smoke check creates a server-issued room and multiple isolated browser clients. It verifies microphone and camera publication, remote audio/video reception, absence of local audio playback, screen sharing, chat and private-message isolation, attachments and transparent image preview, per-participant volume up to 200%, connection statistics, stage mode, device settings, noise-suppression support, and recovery after an initial device-access failure.
+The Jitsi smoke check creates a server-issued room and multiple isolated browser clients. It verifies microphone and camera publication, remote audio/video reception, absence of local audio playback, screen sharing, replies and private-message isolation, automatic recipient reset, unread/chat and participant sounds, attachments and transparent image preview, a stable grid while chat animates, per-participant volume up to 200%, connection statistics, stage mode, device settings, noise-suppression support, and recovery after an initial device-access failure.
 
 For a long-session transport check, keep the clients connected for the required duration:
 

@@ -131,10 +131,65 @@ try {
       );
     }
 
+    const modeSwitch = page.getByLabel("Действие с комнатой");
+    const modeAnimationBefore = await modeSwitch.evaluate((element) => ({
+      transform: getComputedStyle(element, "::before").transform,
+      transitionDuration: getComputedStyle(element, "::before")
+        .transitionDuration,
+    }));
+    const profileBottom = await page
+      .locator("[data-profile-editor]")
+      .evaluate((element) => element.getBoundingClientRect().bottom);
+
     await page
       .getByRole("button", { name: "Войти по коду" })
       .click();
-    await page.waitForTimeout(100);
+    await page.waitForTimeout(280);
+    const roomCodeBounds = await page
+      .getByLabel("Код комнаты")
+      .evaluate((element) => element.getBoundingClientRect());
+    const modeAnimationAfter = await modeSwitch.evaluate((element) => ({
+      transform: getComputedStyle(element, "::before").transform,
+      revealRows: getComputedStyle(
+        document.querySelector('[aria-hidden="false"]') ??
+          element,
+      ).gridTemplateRows,
+    }));
+
+    if (
+      modeAnimationBefore.transitionDuration === "0s" ||
+      modeAnimationBefore.transform === modeAnimationAfter.transform ||
+      roomCodeBounds.top < profileBottom
+    ) {
+      throw new Error(
+        `Landing mode animation or field order is invalid: ${JSON.stringify({
+          modeAnimationAfter,
+          modeAnimationBefore,
+          profileBottom,
+          roomCodeTop: roomCodeBounds.top,
+        })}`,
+      );
+    }
+
+    const passwordInput = page.getByLabel("Пароль комнаты");
+    const passwordReveal = page.getByRole("button", {
+      name: "Удерживайте, чтобы показать пароль",
+    });
+
+    await passwordInput.fill("visible-secret");
+    await passwordReveal.dispatchEvent("pointerdown");
+    await page.waitForFunction(
+      () =>
+        document.querySelector('input[aria-label="Пароль комнаты"]')
+          ?.type === "text",
+    );
+    await passwordReveal.dispatchEvent("pointerup");
+    await page.waitForFunction(
+      () =>
+        document.querySelector('input[aria-label="Пароль комнаты"]')
+          ?.type === "password",
+    );
+
     const previewTopAfter = await preview.evaluate(
       (element) => element.getBoundingClientRect().top,
     );
@@ -340,6 +395,38 @@ try {
     );
   }
 
+  const connectionColors = await page
+    .locator(
+      '[data-connection-summary] [aria-label^="Соединение "]',
+    )
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const filled = Array.from(element.querySelectorAll("i")).filter(
+          (bar) => getComputedStyle(bar).backgroundColor !== "rgb(82, 90, 98)",
+        );
+
+        return {
+          color:
+            filled.length > 0
+              ? getComputedStyle(filled[0]).backgroundColor
+              : null,
+          level: filled.length,
+        };
+      }),
+    );
+  const colorsByLevel = new Map(
+    connectionColors.map(({ color, level }) => [level, color]),
+  );
+
+  if (
+    ![1, 2, 3, 4].every((level) => colorsByLevel.has(level)) ||
+    new Set(colorsByLevel.values()).size !== 4
+  ) {
+    throw new Error(
+      `Connection levels do not have four distinct colors: ${JSON.stringify(connectionColors)}`,
+    );
+  }
+
   for (const button of [copyButton, fullscreenButton]) {
     await button.hover();
     await page.waitForTimeout(180);
@@ -435,6 +522,24 @@ try {
   await page.getByText("Visual Tester", { exact: true }).last().waitFor();
   await page.screenshot({ path: chatScreenshotPath });
 
+  const privateMessageArticle = page
+    .locator("article")
+    .filter({ hasText: "Личное демо" });
+
+  await privateMessageArticle.click();
+  await page
+    .getByRole("group", { name: "Действия с сообщением" })
+    .getByRole("button", { name: "Ответить" })
+    .click();
+  await page.getByText("Ответ для Visual Tester", { exact: true }).waitFor();
+  await page.getByLabel("Сообщение в чат").fill("Ответ с цитатой");
+  await page.getByRole("button", { name: "Отправить сообщение" }).click();
+  await page
+    .locator("article")
+    .filter({ hasText: "Ответ с цитатой" })
+    .getByText("Личное демо", { exact: true })
+    .waitFor();
+
   const transparentPngDataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
 
@@ -517,6 +622,19 @@ try {
     .waitFor();
 
   await page.getByRole("button", { name: "Настройки" }).click();
+  await page
+    .getByRole("dialog", { name: "Настройки устройств" })
+    .waitFor();
+  if (
+    (await page.getByLabel("Пароль комнаты создателя").count()) !== 0
+  ) {
+    throw new Error("A guest can see the creator-only room password.");
+  }
+  await page.getByRole("button", { name: "English" }).click();
+  await page
+    .getByRole("dialog", { name: "Device settings" })
+    .waitFor();
+  await page.getByRole("button", { name: "Русский" }).click();
   await page
     .getByRole("dialog", { name: "Настройки устройств" })
     .waitFor();

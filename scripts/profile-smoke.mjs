@@ -23,12 +23,31 @@ const browser = await chromium.launch({ executablePath, headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 
 await page.addInitScript(() => {
+  const originalPlay = HTMLMediaElement.prototype.play;
+
   localStorage.setItem("ninjitsi.locale", "ru");
   window.__NINJITSI_CONFIG__ = { jitsiUrl: "" };
+  window.__ninjitsiPlayedSounds = [];
+  HTMLMediaElement.prototype.play = function play() {
+    const source = this.currentSrc || this.src;
+
+    if (source.includes("/Sounds/")) {
+      window.__ninjitsiPlayedSounds.push(
+        new URL(source, window.location.href).pathname,
+      );
+      queueMicrotask(() => this.dispatchEvent(new Event("ended")));
+      return Promise.resolve();
+    }
+
+    return originalPlay.call(this);
+  };
 });
 
 try {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
+  if ((await page.getByLabel("Ваше имя").inputValue()) !== "") {
+    throw new Error("Без сохранённых профилей имя должно быть пустым");
+  }
   await page.getByLabel("Ваше имя").fill("Profile Tester");
   const avatarDataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
@@ -50,6 +69,7 @@ try {
   await page
     .getByRole("button", { name: "Сменить аватарку" })
     .waitFor();
+  await page.getByLabel("Пароль комнаты").fill("profile-secret");
   await page
     .getByRole("button", { name: "Создать комнату" })
     .click();
@@ -89,6 +109,25 @@ try {
     .getByRole("dialog", { name: "Вход в комнату" })
     .waitFor({ state: "hidden" });
   await page.locator("[data-video-tile]").first().locator("img").waitFor();
+  await page.waitForFunction(
+    () =>
+      (window.__ninjitsiPlayedSounds ?? []).some((source) =>
+        source.endsWith("Nin.initial_room_enter.wav"),
+      ),
+    undefined,
+    { timeout: 10_000 },
+  );
+  await page.getByRole("button", { name: "Настройки" }).click();
+  const creatorPassword = page.getByLabel("Пароль комнаты создателя");
+
+  await creatorPassword.waitFor();
+  if (
+    (await creatorPassword.inputValue()) !== "profile-secret" ||
+    (await creatorPassword.getAttribute("type")) !== "password"
+  ) {
+    throw new Error("Создатель не видит сохранённый пароль комнаты.");
+  }
+  await page.getByRole("button", { name: "Закрыть настройки" }).click();
 
   const storedProfiles = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("ninjitsi.profiles") ?? "[]"),
@@ -156,6 +195,7 @@ try {
       {
         avatar: "uploaded and restored",
         deletion: "selected profile removed",
+        initialRoomSound: "played for creator",
         joinOverlayStrokes: "removed",
         profileCount: storedProfiles.length,
         selection: "restored",

@@ -15,9 +15,6 @@
   align-content: center;
   justify-content: center;
   flex-wrap: wrap;
-  transition:
-    width 180ms ease,
-    height 180ms ease;
 }
 
 .cell,

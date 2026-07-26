@@ -139,11 +139,26 @@
   position: relative;
 }
 
-.passwordField svg {
+.passwordField > button {
   position: absolute;
-  top: 16px;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
   left: 14px;
+  display: grid;
+  width: 20px;
+  padding: 0;
+  place-items: center;
   color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.passwordField > button:hover,
+.passwordField > button:active {
+  color: var(--accent);
 }
 
 .passwordField input {

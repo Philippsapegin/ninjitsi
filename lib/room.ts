@@ -1,6 +1,7 @@
 export interface PendingJoinDetails {
   avatarDataUrl: string;
   displayName: string;
+  isCreator: boolean;
   password: string;
   profileId: string;
   startAudioMuted: boolean;
@@ -8,6 +9,7 @@ export interface PendingJoinDetails {
 }
 
 const PENDING_JOIN_KEY = "ninjitsi.pendingJoin";
+const CREATED_ROOM_PREFIX = "ninjitsi.createdRoom.";
 
 export function normalizeRoomName(value: string): string {
   return value
@@ -20,6 +22,34 @@ export function normalizeRoomName(value: string): string {
 
 export function savePendingJoin(details: PendingJoinDetails): void {
   sessionStorage.setItem(PENDING_JOIN_KEY, JSON.stringify(details));
+}
+
+export function rememberCreatedRoom(
+  roomName: string,
+  password: string,
+): void {
+  sessionStorage.setItem(
+    `${CREATED_ROOM_PREFIX}${roomName}`,
+    JSON.stringify({ password }),
+  );
+}
+
+export function readCreatedRoomPassword(
+  roomName: string,
+): string | null {
+  const raw = sessionStorage.getItem(`${CREATED_ROOM_PREFIX}${roomName}`);
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { password?: unknown };
+
+    return typeof parsed.password === "string" ? parsed.password : null;
+  } catch {
+    return null;
+  }
 }
 
 export function readPendingJoin(): PendingJoinDetails | null {
@@ -41,6 +71,7 @@ export function readPendingJoin(): PendingJoinDetails | null {
       avatarDataUrl:
         typeof parsed.avatarDataUrl === "string" ? parsed.avatarDataUrl : "",
       displayName: parsed.displayName,
+      isCreator: Boolean(parsed.isCreator),
       password: typeof parsed.password === "string" ? parsed.password : "",
       profileId: typeof parsed.profileId === "string" ? parsed.profileId : "",
       startAudioMuted: Boolean(parsed.startAudioMuted),

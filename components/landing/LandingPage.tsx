@@ -21,7 +21,11 @@ import { ProfileEditor } from "@/components/profile/ProfileEditor";
 import { useI18n } from "@/lib/i18n";
 import { saveClientProfile } from "@/lib/profiles";
 import type { ProfileDraft } from "@/lib/profiles";
-import { normalizeRoomName, savePendingJoin } from "@/lib/room";
+import {
+  normalizeRoomName,
+  rememberCreatedRoom,
+  savePendingJoin,
+} from "@/lib/room";
 import { createRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import styles from "./LandingPage.module.css";
 
@@ -37,6 +41,7 @@ export function LandingPage() {
     profileId: "",
   });
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const previewPeople = [
@@ -64,15 +69,20 @@ export function LandingPage() {
     setIsBusy(true);
 
     try {
-      const targetRoom =
-        mode === "create"
-          ? (await createRoom(password)).room.code
-          : (await getRoom(normalizedRoom)).code;
+      let targetRoom: string;
+
+      if (mode === "create") {
+        targetRoom = (await createRoom(password)).room.code;
+        rememberCreatedRoom(targetRoom, password);
+      } else {
+        targetRoom = (await getRoom(normalizedRoom)).code;
+      }
       const savedProfile = saveClientProfile(profile);
 
       savePendingJoin({
         avatarDataUrl: savedProfile.avatarDataUrl,
         displayName: savedProfile.displayName,
+        isCreator: mode === "create",
         password,
         profileId: savedProfile.id,
         startAudioMuted: false,
@@ -139,6 +149,7 @@ export function LandingPage() {
             <div
               aria-label={tr("Room action", "Действие с комнатой")}
               className={styles.modeSwitch}
+              data-mode={mode}
             >
               <button
                 aria-pressed={mode === "create"}
@@ -160,24 +171,32 @@ export function LandingPage() {
               </button>
             </div>
 
-            {mode === "join" && (
-              <label className={styles.field}>
-                <span>{tr("Room code", "Код комнаты")}</span>
-                <input
-                  aria-label={tr("Room code", "Код комнаты")}
-                  autoComplete="off"
-                  onChange={(event) => setRoomName(event.target.value)}
-                  placeholder={tr(
-                    "For example, quiet-studio-04210",
-                    "Например, quiet-studio-04210",
-                  )}
-                  spellCheck={false}
-                  value={roomName}
-                />
-              </label>
-            )}
-
             <ProfileEditor onChange={setProfile} value={profile} />
+
+            <div
+              aria-hidden={mode !== "join"}
+              className={`${styles.roomCodeReveal} ${
+                mode === "join" ? styles.roomCodeRevealOpen : ""
+              }`}
+            >
+              <div>
+                <label className={styles.field}>
+                  <span>{tr("Room code", "Код комнаты")}</span>
+                  <input
+                    aria-label={tr("Room code", "Код комнаты")}
+                    autoComplete="off"
+                    disabled={mode !== "join"}
+                    onChange={(event) => setRoomName(event.target.value)}
+                    placeholder={tr(
+                      "For example, quiet-studio-04210",
+                      "Например, quiet-studio-04210",
+                    )}
+                    spellCheck={false}
+                    value={roomName}
+                  />
+                </label>
+              </div>
+            </div>
 
             <label className={styles.field}>
               <span className={styles.passwordLabel}>
@@ -185,7 +204,21 @@ export function LandingPage() {
                 <em>{tr("optional", "необязательно")}</em>
               </span>
               <div className={styles.inputWithIcon}>
-                <LockKeyhole size={17} />
+                <button
+                  aria-label={tr(
+                    "Hold to show password",
+                    "Удерживайте, чтобы показать пароль",
+                  )}
+                  className={styles.passwordReveal}
+                  onBlur={() => setPasswordVisible(false)}
+                  onPointerCancel={() => setPasswordVisible(false)}
+                  onPointerDown={() => setPasswordVisible(true)}
+                  onPointerLeave={() => setPasswordVisible(false)}
+                  onPointerUp={() => setPasswordVisible(false)}
+                  type="button"
+                >
+                  <LockKeyhole size={17} />
+                </button>
                 <input
                   aria-label={tr("Room password", "Пароль комнаты")}
                   autoComplete="off"
@@ -194,7 +227,7 @@ export function LandingPage() {
                     "Leave empty for an open room",
                     "Оставьте пустым для открытой комнаты",
                   )}
-                  type="password"
+                  type={passwordVisible ? "text" : "password"}
                   value={password}
                 />
               </div>

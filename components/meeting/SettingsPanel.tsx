@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, Check, ChevronDown, Mic, Settings, Sparkles, X } from "lucide-react";
+import {
+  Camera,
+  Check,
+  ChevronDown,
+  Languages,
+  LockKeyhole,
+  Mic,
+  Settings,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import styles from "./SettingsPanel.module.css";
 
@@ -13,6 +23,7 @@ interface SettingsPanelProps {
   onAudioInputChange: (deviceId: string) => Promise<void>;
   onNoiseSuppressionChange: (enabled: boolean) => Promise<void>;
   onVideoInputChange: (deviceId: string) => Promise<void>;
+  roomPassword: string | null;
   videoInputId: string;
 }
 
@@ -32,10 +43,12 @@ export function SettingsPanel({
   onAudioInputChange,
   onNoiseSuppressionChange,
   onVideoInputChange,
+  roomPassword,
   videoInputId,
 }: SettingsPanelProps) {
-  const { tr } = useI18n();
+  const { locale, setLocale, tr } = useI18n();
   const [open, setOpen] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -201,6 +214,72 @@ export function SettingsPanel({
               <i>{noiseSuppressionEnabled && <Check size={11} />}</i>
             </button>
           </div>
+
+          <div className={styles.languageRow}>
+            <span className={styles.toggleIcon}>
+              <Languages size={15} />
+            </span>
+            <div>
+              <strong>{tr("Language", "Язык")}</strong>
+              <small>{tr("Meeting interface", "Интерфейс встречи")}</small>
+            </div>
+            <div
+              aria-label={tr("Language", "Язык")}
+              className={styles.languageButtons}
+            >
+              <button
+                aria-label="Русский"
+                aria-pressed={locale === "ru"}
+                className={locale === "ru" ? styles.languageSelected : ""}
+                onClick={() => setLocale("ru")}
+                type="button"
+              >
+                RU
+              </button>
+              <button
+                aria-label="English"
+                aria-pressed={locale === "en"}
+                className={locale === "en" ? styles.languageSelected : ""}
+                onClick={() => setLocale("en")}
+                type="button"
+              >
+                EN
+              </button>
+            </div>
+          </div>
+
+          {roomPassword !== null && (
+            <label className={styles.creatorPassword}>
+              <span>
+                <LockKeyhole size={14} />
+                {tr("Room password", "Пароль комнаты")}
+              </span>
+              <div>
+                <button
+                  aria-label={tr(
+                    "Hold to show password",
+                    "Удерживайте, чтобы показать пароль",
+                  )}
+                  disabled={!roomPassword}
+                  onBlur={() => setPasswordVisible(false)}
+                  onPointerCancel={() => setPasswordVisible(false)}
+                  onPointerDown={() => setPasswordVisible(true)}
+                  onPointerLeave={() => setPasswordVisible(false)}
+                  onPointerUp={() => setPasswordVisible(false)}
+                  type="button"
+                >
+                  <LockKeyhole size={15} />
+                </button>
+                <input
+                  aria-label={tr("Creator room password", "Пароль комнаты создателя")}
+                  placeholder={tr("No password", "Без пароля")}
+                  readOnly
+                  type={passwordVisible ? "text" : "password"}
+                  value={roomPassword}
+                />
+              </div>
+            </label>
+          )}
         </section>
       )}
 

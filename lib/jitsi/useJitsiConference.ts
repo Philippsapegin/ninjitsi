@@ -15,6 +15,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  ChatReplyReference,
   JitsiConferenceLike,
   JitsiConnectionLike,
   JitsiMeetJSLibrary,
@@ -27,6 +28,7 @@ import type {
 export interface JoinOptions {
   avatarDataUrl: string;
   displayName: string;
+  isCreator: boolean;
   password: string;
   profileId: string;
   startAudioMuted: boolean;
@@ -54,7 +56,11 @@ interface ConferenceController {
     file: File,
     recipientIds?: string[],
   ) => Promise<void>;
-  sendChatMessage: (text: string, recipientIds?: string[]) => void;
+  sendChatMessage: (
+    text: string,
+    recipientIds?: string[],
+    replyTo?: ChatReplyReference,
+  ) => void;
   setAudioInputDevice: (deviceId: string) => Promise<void>;
   setNoiseSuppressionEnabled: (enabled: boolean) => Promise<void>;
   setVideoInputDevice: (deviceId: string) => Promise<void>;
@@ -69,6 +75,7 @@ interface ConferenceController {
 }
 
 const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
+const CHAT_TEXT_MESSAGE_PREFIX = "__ninjitsi_chat_v2__:";
 const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
 const PRIVATE_CHAT_MESSAGE_TYPE = "ninjitsi.private-chat.v1";
 const ATTACHMENT_CHUNK_SIZE = 12_000;
@@ -141,6 +148,11 @@ interface PrivateChatWireMessage {
   type: typeof PRIVATE_CHAT_MESSAGE_TYPE;
 }
 
+interface ChatTextWireMessage {
+  replyTo?: ChatReplyReference;
+  text: string;
+}
+
 type LocalMediaDevice = "audio" | "video" | "desktop";
 
 function parseAttachmentWireMessage(text: string) {
@@ -159,6 +171,74 @@ function parseAttachmentWireMessage(text: string) {
 
 function attachmentMessage(message: AttachmentWireMessage) {
   return `${ATTACHMENT_MESSAGE_PREFIX}${JSON.stringify(message)}`;
+}
+
+function normalizeReplyReference(
+  value: unknown,
+): ChatReplyReference | undefined {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("messageId" in value) ||
+    typeof value.messageId !== "string" ||
+    !("senderName" in value) ||
+    typeof value.senderName !== "string" ||
+    !("text" in value) ||
+    typeof value.text !== "string"
+  ) {
+    return undefined;
+  }
+
+  return {
+    messageId: value.messageId.slice(0, 180),
+    senderName: value.senderName.slice(0, 180),
+    text: value.text.slice(0, 320),
+  };
+}
+
+function chatTextMessage(
+  text: string,
+  replyTo?: ChatReplyReference,
+) {
+  if (!replyTo) {
+    return text;
+  }
+
+  return `${CHAT_TEXT_MESSAGE_PREFIX}${JSON.stringify({
+    replyTo: normalizeReplyReference(replyTo),
+    text,
+  } satisfies ChatTextWireMessage)}`;
+}
+
+function parseChatTextMessage(text: string): ChatTextWireMessage {
+  if (!text.startsWith(CHAT_TEXT_MESSAGE_PREFIX)) {
+    return { text };
+  }
+
+  try {
+    const parsed = JSON.parse(
+      text.slice(CHAT_TEXT_MESSAGE_PREFIX.length),
+    ) as unknown;
+
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !("text" in parsed) ||
+      typeof parsed.text !== "string"
+    ) {
+      return { text };
+    }
+
+    return {
+      replyTo:
+        "replyTo" in parsed
+          ? normalizeReplyReference(parsed.replyTo)
+          : undefined,
+      text: parsed.text.slice(0, 4000),
+    };
+  } catch {
+    return { text };
+  }
 }
 
 function parsePingWireMessage(text: string) {
@@ -1089,6 +1169,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 return;
               }
 
+              const chatText = parseChatTextMessage(rawText);
+
               setChatMessages((messages) => [
                 ...messages,
                 {
@@ -1100,11 +1182,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
                   isLocal: false,
                   isPrivate,
                   recipientNames,
+                  replyTo: chatText.replyTo,
                   senderId: rawSenderId,
                   senderName:
                     sender?.getDisplayName() ||
                     ui("Unnamed participant", "Без имени"),
-                  text: rawText,
+                  text: chatText.text,
                   timestamp,
                 },
               ]);
@@ -1851,7 +1934,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
   );
 
   const sendChatMessage = useCallback(
-    (rawText: string, recipientIds: string[] = []) => {
+    (
+      rawText: string,
+      recipientIds: string[] = [],
+      replyTo?: ChatReplyReference,
+    ) => {
       const text = rawText.trim();
 
       if (!text) {
@@ -1906,7 +1993,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
       const timestamp = Date.now();
 
       if (!isDemo && conference) {
-        deliverChatWireMessage(conference, text, recipients, timestamp);
+        deliverChatWireMessage(
+          conference,
+          chatTextMessage(text, replyTo),
+          recipients,
+          timestamp,
+        );
       }
       setChatMessages((messages) => [
         ...messages,
@@ -1916,6 +2008,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
           isLocal: true,
           isPrivate,
           recipientNames: recipients.map((recipient) => recipient.name),
+          replyTo: normalizeReplyReference(replyTo),
           senderId: localIdRef.current,
           senderName: localNameRef.current,
           text,
@@ -2138,7 +2231,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
         pingMs:
           stats?.pingMs ??
           (isDemo && !participant.isLocal ? 18 + index * 7 : null),
-        quality: stats?.quality ?? (isDemo ? 92 - index * 5 : null),
+        quality:
+          stats?.quality ?? (isDemo ? Math.max(8, 92 - index * 14) : null),
       };
     },
   );
