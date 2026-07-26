@@ -1,22 +1,34 @@
 export type MediaType = "audio" | "video";
 
+export interface JitsiTrackEffect {
+  isEnabled: (track: JitsiTrackLike) => boolean;
+  startEffect: (stream: MediaStream) => MediaStream;
+  stopEffect: () => void;
+}
+
 export interface JitsiTrackLike {
-  addEventListener?: (event: string, listener: () => void) => void;
+  addEventListener?: (
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ) => void;
   attach: (element: HTMLElement) => Promise<void>;
   detach: (element?: HTMLElement) => void;
   dispose: () => Promise<void>;
+  getDeviceId?: () => string;
   getParticipantId?: () => string;
   getType: () => MediaType;
   getVideoType?: () => "camera" | "desktop" | undefined;
   isLocal?: () => boolean;
   isMuted: () => boolean;
   mute: () => Promise<void>;
+  setEffect?: (effect?: JitsiTrackEffect) => Promise<void>;
   unmute: () => Promise<void>;
 }
 
 export interface JitsiParticipantLike {
   getDisplayName: () => string;
   getId: () => string;
+  getProperty?: (name: string) => unknown;
   getRole: () => string;
   getTracks: () => JitsiTrackLike[];
   isAudioMuted: () => boolean;
@@ -32,9 +44,16 @@ export interface JitsiConferenceLike {
   join: (password?: string) => void;
   leave: () => Promise<void>;
   lock: (password: string) => Promise<void>;
+  myUserId?: () => string;
   on: (event: string, listener: (...args: unknown[]) => void) => void;
   removeTrack: (track: JitsiTrackLike) => Promise<void>;
+  replaceTrack?: (
+    oldTrack: JitsiTrackLike,
+    newTrack: JitsiTrackLike,
+  ) => Promise<void>;
+  sendTextMessage?: (message: string) => void;
   setDisplayName: (displayName: string) => void;
+  setLocalParticipantProperty?: (name: string, value: string) => void;
 }
 
 export interface JitsiConnectionLike {
@@ -63,7 +82,9 @@ export interface JitsiMeetJSLibrary {
     options: Record<string, unknown>,
   ) => JitsiConnectionLike;
   createLocalTracks: (options: {
+    cameraDeviceId?: string;
     devices: Array<"audio" | "video" | "desktop">;
+    micDeviceId?: string;
     resolution?: number;
   }) => Promise<JitsiTrackLike[]>;
   events: JitsiEventCollection;
@@ -75,6 +96,7 @@ export interface JitsiMeetJSLibrary {
 export interface ParticipantView {
   audioMuted: boolean;
   audioTrack?: JitsiTrackLike;
+  avatarUrl?: string;
   displayName: string;
   id: string;
   isDominantSpeaker: boolean;
@@ -83,6 +105,16 @@ export interface ParticipantView {
   isScreenSharing: boolean;
   videoMuted: boolean;
   videoTrack?: JitsiTrackLike;
+}
+
+export interface ChatMessage {
+  avatarUrl?: string;
+  id: string;
+  isLocal: boolean;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
 }
 
 export type MeetingStatus =

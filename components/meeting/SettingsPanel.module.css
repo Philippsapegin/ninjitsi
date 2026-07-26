@@ -1,0 +1,200 @@
+.root {
+  position: fixed;
+  z-index: 35;
+  bottom: 25px;
+  left: 24px;
+}
+
+.trigger {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  place-items: center;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  color: var(--accent);
+  transform: rotate(8deg);
+}
+
+.panel {
+  position: absolute;
+  bottom: 61px;
+  left: 0;
+  display: flex;
+  width: 328px;
+  padding: 18px;
+  flex-direction: column;
+  gap: 17px;
+  background: rgba(18, 22, 27, 0.98);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px);
+}
+
+.panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.panel header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.panel header span {
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.panel header small,
+.toggleRow small {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.panel header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.selectField {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.selectField > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.selectField > div {
+  position: relative;
+}
+
+.selectField select {
+  width: 100%;
+  height: 43px;
+  padding: 0 37px 0 12px;
+  appearance: none;
+  outline: none;
+  color: var(--text);
+  background: #0c0f13;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.selectField select:focus {
+  border-color: rgba(216, 255, 99, 0.48);
+}
+
+.selectField select:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.selectField > div > svg {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  pointer-events: none;
+  color: var(--text-faint);
+}
+
+.toggleRow {
+  display: grid;
+  padding-top: 2px;
+  grid-template-columns: 31px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.toggleIcon {
+  display: grid;
+  width: 31px;
+  height: 31px;
+  place-items: center;
+  color: var(--accent);
+  background: rgba(216, 255, 99, 0.08);
+  border-radius: 9px;
+}
+
+.toggleRow > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toggleRow strong {
+  font-size: 11px;
+  font-weight: 670;
+}
+
+.toggleRow > button {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  background: #30363d;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.toggleRow > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.toggleRow > button i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: var(--accent-ink);
+  background: #aeb5bb;
+  border-radius: 50%;
+  transition:
+    left 150ms ease,
+    background 150ms ease;
+}
+
+.toggleRow > button.toggleOn {
+  background: rgba(216, 255, 99, 0.25);
+}
+
+.toggleRow > button.toggleOn i {
+  left: 19px;
+  background: var(--accent);
+}

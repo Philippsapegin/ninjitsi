@@ -58,7 +58,9 @@ try {
   });
   await page.getByLabel("Ваше имя").fill("Visual Tester");
   await page.getByRole("button", { name: "Войти в комнату" }).click();
-  await page.locator("article").first().waitFor();
+  const videoTiles = page.locator("[data-video-tile]");
+
+  await videoTiles.first().waitFor();
 
   const viewportResults = [];
 
@@ -70,7 +72,7 @@ try {
     await page.setViewportSize(viewport);
     await page.waitForTimeout(400);
 
-    const tileMetrics = await page.locator("article").evaluateAll((tiles) =>
+    const tileMetrics = await videoTiles.evaluateAll((tiles) =>
       tiles.map((tile) => {
         const bounds = tile.getBoundingClientRect();
 
@@ -89,7 +91,7 @@ try {
         .querySelector("footer")
         ?.getBoundingClientRect().top,
       gridTop: document
-        .querySelector("article")
+        .querySelector("[data-video-tile]")
         ?.parentElement?.parentElement?.getBoundingClientRect().top,
       scrollWidth: document.documentElement.scrollWidth,
     }));
@@ -129,8 +131,32 @@ try {
     viewportResults.push({ pageMetrics, tileMetrics, viewport });
   }
 
-  if ((await page.locator("aside").count()) !== 0) {
-    throw new Error("Обнаружен нежелательный sidebar");
+  const chatSidebar = page.getByRole("complementary");
+
+  if ((await chatSidebar.count()) !== 1) {
+    throw new Error("Не найден единственный левый чат");
+  }
+
+  await page.getByRole("button", { name: "Настройки" }).click();
+  await page
+    .getByRole("dialog", { name: "Настройки устройств" })
+    .waitFor();
+
+  const tileAppearance = await videoTiles.first().evaluate(
+    (tile) => {
+      const style = getComputedStyle(tile);
+
+      return {
+        borderWidth: style.borderWidth,
+        radius: style.borderRadius,
+      };
+    },
+  );
+
+  if (tileAppearance.borderWidth !== "0px" || tileAppearance.radius !== "8px") {
+    throw new Error(
+      `Оформление видеоплитки не соответствует макету: ${JSON.stringify(tileAppearance)}`,
+    );
   }
 
   await page.screenshot({ path: screenshotPath });

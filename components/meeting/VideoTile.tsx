@@ -40,9 +40,8 @@ export function VideoTile({ participant }: VideoTileProps) {
 
   return (
     <article
-      className={`${styles.tile} ${
-        participant.isDominantSpeaker ? styles.speaking : ""
-      }`}
+      className={styles.tile}
+      data-video-tile
       style={{ background: participantGradient(participant.id) }}
     >
       {hasVisibleVideo ? (
@@ -58,7 +57,12 @@ export function VideoTile({ participant }: VideoTileProps) {
         </div>
       ) : (
         <div className={styles.avatar} aria-hidden="true">
-          {initials(participant.displayName)}
+          {participant.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img alt="" src={participant.avatarUrl} />
+          ) : (
+            initials(participant.displayName)
+          )}
         </div>
       )}
 
@@ -91,13 +95,6 @@ export function VideoTile({ participant }: VideoTileProps) {
           </span>
         )}
       </div>
-
-      {participant.isDominantSpeaker && (
-        <span className={styles.speakingBadge}>
-          <i />
-          говорит
-        </span>
-      )}
     </article>
   );
 }

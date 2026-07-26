@@ -7,11 +7,13 @@ import {
   MonitorUp,
   PhoneOff,
 } from "lucide-react";
+import type { CSSProperties } from "react";
 import styles from "./CallControls.module.css";
 
 interface CallControlsProps {
   isAudioBusy: boolean;
   isAudioMuted: boolean;
+  localAudioLevel: number;
   isScreenShareBusy: boolean;
   isScreenSharing: boolean;
   isVideoBusy: boolean;
@@ -24,6 +26,7 @@ interface CallControlsProps {
 
 interface ControlButtonProps {
   active?: boolean;
+  audioLevel?: number;
   disabled?: boolean;
   danger?: boolean;
   label: string;
@@ -34,6 +37,7 @@ interface ControlButtonProps {
 
 function ControlButton({
   active = false,
+  audioLevel,
   children,
   danger = false,
   disabled = false,
@@ -46,11 +50,20 @@ function ControlButton({
       aria-label={label}
       className={`${styles.control} ${active ? styles.active : ""} ${
         danger ? styles.danger : ""
-      } ${toggledOff ? styles.off : ""}`}
+      } ${toggledOff ? styles.off : ""} ${
+        audioLevel !== undefined ? styles.audioReactive : ""
+      }`}
       onClick={onClick}
       disabled={disabled}
       title={label}
       type="button"
+      style={
+        audioLevel === undefined
+          ? undefined
+          : ({
+              "--audio-level": Math.max(0, Math.min(1, audioLevel)),
+            } as CSSProperties)
+      }
     >
       {children}
       <span>{label}</span>
@@ -61,6 +74,7 @@ function ControlButton({
 export function CallControls({
   isAudioBusy,
   isAudioMuted,
+  localAudioLevel,
   isScreenShareBusy,
   isScreenSharing,
   isVideoBusy,
@@ -74,6 +88,7 @@ export function CallControls({
     <footer className={styles.bar}>
       <div className={styles.dock}>
         <ControlButton
+          audioLevel={isAudioMuted ? 0 : localAudioLevel}
           disabled={isAudioBusy}
           label={
             isAudioBusy

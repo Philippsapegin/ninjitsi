@@ -1,6 +1,8 @@
 export interface PendingJoinDetails {
+  avatarDataUrl: string;
   displayName: string;
   password: string;
+  profileId: string;
   startAudioMuted: boolean;
   startVideoMuted: boolean;
 }
@@ -29,7 +31,21 @@ export function readPendingJoin(): PendingJoinDetails | null {
 
   try {
     sessionStorage.removeItem(PENDING_JOIN_KEY);
-    return JSON.parse(raw) as PendingJoinDetails;
+    const parsed = JSON.parse(raw) as Partial<PendingJoinDetails>;
+
+    if (typeof parsed.displayName !== "string") {
+      return null;
+    }
+
+    return {
+      avatarDataUrl:
+        typeof parsed.avatarDataUrl === "string" ? parsed.avatarDataUrl : "",
+      displayName: parsed.displayName,
+      password: typeof parsed.password === "string" ? parsed.password : "",
+      profileId: typeof parsed.profileId === "string" ? parsed.profileId : "",
+      startAudioMuted: Boolean(parsed.startAudioMuted),
+      startVideoMuted: Boolean(parsed.startVideoMuted),
+    };
   } catch {
     sessionStorage.removeItem(PENDING_JOIN_KEY);
     return null;

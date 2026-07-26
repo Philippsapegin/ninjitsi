@@ -11,6 +11,9 @@ import {
   Video,
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
+import { ProfileEditor } from "@/components/profile/ProfileEditor";
+import { saveClientProfile } from "@/lib/profiles";
+import type { ProfileDraft } from "@/lib/profiles";
 import { normalizeRoomName, savePendingJoin } from "@/lib/room";
 import { createRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import styles from "./LandingPage.module.css";
@@ -29,7 +32,11 @@ type LandingMode = "create" | "join";
 export function LandingPage() {
   const [mode, setMode] = useState<LandingMode>("create");
   const [roomName, setRoomName] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [profile, setProfile] = useState<ProfileDraft>({
+    avatarDataUrl: "",
+    displayName: "",
+    profileId: "",
+  });
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -39,7 +46,7 @@ export function LandingPage() {
     const normalizedRoom = normalizeRoomName(roomName);
 
     if (
-      !displayName.trim() ||
+      !profile.displayName.trim() ||
       (mode === "join" && !normalizedRoom) ||
       isBusy
     ) {
@@ -54,10 +61,13 @@ export function LandingPage() {
         mode === "create"
           ? (await createRoom(password)).room.code
           : (await getRoom(normalizedRoom)).code;
+      const savedProfile = saveClientProfile(profile);
 
       savePendingJoin({
-        displayName: displayName.trim(),
+        avatarDataUrl: savedProfile.avatarDataUrl,
+        displayName: savedProfile.displayName,
         password,
+        profileId: savedProfile.id,
         startAudioMuted: false,
         startVideoMuted: false,
       });
@@ -124,31 +134,21 @@ export function LandingPage() {
               </button>
             </div>
 
-            <div className={mode === "join" ? styles.fieldRow : undefined}>
-              {mode === "join" && (
-                <label className={styles.field}>
-                  <span>Код комнаты</span>
-                  <input
-                    aria-label="Код комнаты"
-                    autoComplete="off"
-                    onChange={(event) => setRoomName(event.target.value)}
-                    placeholder="Например, quiet-studio-04210"
-                    spellCheck={false}
-                    value={roomName}
-                  />
-                </label>
-              )}
+            {mode === "join" && (
               <label className={styles.field}>
-                <span>Ваше имя</span>
+                <span>Код комнаты</span>
                 <input
-                  aria-label="Ваше имя"
-                  autoComplete="name"
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  placeholder="Как вас представить?"
-                  value={displayName}
+                  aria-label="Код комнаты"
+                  autoComplete="off"
+                  onChange={(event) => setRoomName(event.target.value)}
+                  placeholder="Например, quiet-studio-04210"
+                  spellCheck={false}
+                  value={roomName}
                 />
               </label>
-            </div>
+            )}
+
+            <ProfileEditor onChange={setProfile} value={profile} />
 
             <label className={styles.field}>
               <span className={styles.passwordLabel}>
@@ -173,7 +173,7 @@ export function LandingPage() {
             <button
               className={styles.primaryButton}
               disabled={
-                !displayName.trim() ||
+                !profile.displayName.trim() ||
                 (mode === "join" && !normalizeRoomName(roomName)) ||
                 isBusy
               }
@@ -217,7 +217,7 @@ export function LandingPage() {
               </span>
             </div>
             <div className={styles.previewGrid}>
-              {previewPeople.map((person, index) => (
+              {previewPeople.map((person) => (
                 <div
                   className={`${styles.previewTile} ${styles[person.tone]}`}
                   key={person.name}
@@ -226,9 +226,6 @@ export function LandingPage() {
                     {person.name.slice(0, 1)}
                   </span>
                   <span className={styles.previewName}>{person.name}</span>
-                  {index === 0 && (
-                    <span className={styles.speaking}>говорит</span>
-                  )}
                 </div>
               ))}
             </div>

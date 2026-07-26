@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useJitsiServerUrl } from "@/lib/runtimeConfig";
 import { loadJitsiRuntime } from "./loader";
+import {
+  readMediaPreferences,
+  saveMediaPreferences,
+} from "./mediaPreferences";
+import {
+  isNoiseSuppressionSupported,
+  JitsiNoiseSuppressionEffect,
+} from "./noiseSuppression";
 import type {
+  ChatMessage,
   JitsiConferenceLike,
   JitsiConnectionLike,
   JitsiMeetJSLibrary,
@@ -13,21 +22,33 @@ import type {
 } from "./types";
 
 export interface JoinOptions {
+  avatarDataUrl: string;
   displayName: string;
   password: string;
+  profileId: string;
   startAudioMuted: boolean;
   startVideoMuted: boolean;
 }
 
 interface ConferenceController {
+  audioInputId: string;
+  chatMessages: ChatMessage[];
   error: string | null;
   isAudioBusy: boolean;
   isAudioMuted: boolean;
   isDemo: boolean;
+  isDeviceSwitchBusy: boolean;
   isScreenShareBusy: boolean;
   isScreenSharing: boolean;
   isVideoBusy: boolean;
   isVideoMuted: boolean;
+  localAudioLevel: number;
+  noiseSuppressionEnabled: boolean;
+  noiseSuppressionSupported: boolean;
+  sendChatMessage: (text: string) => void;
+  setAudioInputDevice: (deviceId: string) => Promise<void>;
+  setNoiseSuppressionEnabled: (enabled: boolean) => Promise<void>;
+  setVideoInputDevice: (deviceId: string) => Promise<void>;
   join: (options: JoinOptions) => Promise<void>;
   leave: () => Promise<void>;
   participants: ParticipantView[];
@@ -35,6 +56,7 @@ interface ConferenceController {
   toggleAudio: () => Promise<void>;
   toggleScreenShare: () => Promise<void>;
   toggleVideo: () => Promise<void>;
+  videoInputId: string;
 }
 
 const demoNames = [
@@ -103,9 +125,12 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
 async function createLocalTrack(
   library: JitsiMeetJSLibrary,
   device: LocalMediaDevice,
+  deviceId = "",
 ) {
   const tracks = await library.createLocalTracks({
     devices: [device],
+    ...(device === "audio" && deviceId ? { micDeviceId: deviceId } : {}),
+    ...(device === "video" && deviceId ? { cameraDeviceId: deviceId } : {}),
     ...(device === "video" ? { resolution: 720 } : {}),
   });
   const track = tracks.find((candidate) =>
@@ -140,11 +165,15 @@ function pickPreferredVideo(tracks: JitsiTrackLike[]) {
   return activeDesktop ?? camera ?? videoTracks[0];
 }
 
-function createDemoParticipants(displayName: string): ParticipantView[] {
+function createDemoParticipants(
+  displayName: string,
+  avatarUrl: string,
+): ParticipantView[] {
   const people = [displayName, ...demoNames];
 
   return people.map((name, index) => ({
     audioMuted: index === 3,
+    avatarUrl: index === 0 ? avatarUrl : "",
     displayName: name,
     id: index === 0 ? "local" : `demo-${index}`,
     isDominantSpeaker: index === 1,
@@ -167,17 +196,76 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isScreenShareBusy, setIsScreenShareBusy] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [localAudioLevel, setLocalAudioLevel] = useState(0);
+  const [audioInputId, setAudioInputIdState] = useState("");
+  const [videoInputId, setVideoInputIdState] = useState("");
+  const [noiseSuppressionEnabled, setNoiseSuppressionState] = useState(false);
+  const [noiseSuppressionSupported, setNoiseSuppressionSupported] =
+    useState(false);
+  const [isDeviceSwitchBusy, setIsDeviceSwitchBusy] = useState(false);
   const connectionRef = useRef<JitsiConnectionLike | null>(null);
   const conferenceRef = useRef<JitsiConferenceLike | null>(null);
   const libraryRef = useRef<JitsiMeetJSLibrary | null>(null);
   const localIdRef = useRef("local");
   const localNameRef = useRef("Вы");
+  const localAvatarRef = useRef("");
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const desktopRemovalRef = useRef(new WeakSet<JitsiTrackLike>());
   const audioBusyRef = useRef(false);
   const videoBusyRef = useRef(false);
   const screenShareBusyRef = useRef(false);
+  const audioLevelTracksRef = useRef(new WeakSet<JitsiTrackLike>());
+  const audioInputIdRef = useRef("");
+  const videoInputIdRef = useRef("");
+  const noiseSuppressionEnabledRef = useRef(false);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      const preferences = readMediaPreferences();
+
+      audioInputIdRef.current = preferences.audioInputId;
+      videoInputIdRef.current = preferences.videoInputId;
+      noiseSuppressionEnabledRef.current =
+        preferences.noiseSuppressionEnabled;
+      setAudioInputIdState(preferences.audioInputId);
+      setVideoInputIdState(preferences.videoInputId);
+      setNoiseSuppressionState(preferences.noiseSuppressionEnabled);
+      setNoiseSuppressionSupported(isNoiseSuppressionSupported());
+    });
+  }, []);
+
+  const persistMediaPreferences = useCallback(() => {
+    saveMediaPreferences({
+      audioInputId: audioInputIdRef.current,
+      noiseSuppressionEnabled: noiseSuppressionEnabledRef.current,
+      videoInputId: videoInputIdRef.current,
+    });
+  }, []);
+
+  const watchLocalAudioLevel = useCallback((track?: JitsiTrackLike) => {
+    const eventName = libraryRef.current?.events.track.TRACK_AUDIO_LEVEL_CHANGED;
+
+    if (
+      !track ||
+      !eventName ||
+      !track.addEventListener ||
+      audioLevelTracksRef.current.has(track)
+    ) {
+      return;
+    }
+
+    audioLevelTracksRef.current.add(track);
+    track.addEventListener(eventName, (rawLevel) => {
+      const level =
+        typeof rawLevel === "number" && Number.isFinite(rawLevel)
+          ? Math.max(0, Math.min(1, rawLevel))
+          : 0;
+
+      setLocalAudioLevel(track.isMuted() ? 0 : level);
+    });
+  }, []);
 
   const setMediaBusy = useCallback(
     (device: LocalMediaDevice, busy: boolean) => {
@@ -205,6 +293,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     const localTracks = conference.getLocalTracks();
     const localVideo = pickPreferredVideo(localTracks);
     const localAudio = localTracks.find((track) => track.getType() === "audio");
+    watchLocalAudioLevel(localAudio);
     const remote = conference
       .getParticipants()
       .filter((participant) => !participant.isHidden?.())
@@ -216,6 +305,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
         return {
           audioMuted: participant.isAudioMuted(),
           audioTrack,
+          avatarUrl:
+            typeof participant.getProperty?.("avatarURL") === "string"
+              ? String(participant.getProperty?.("avatarURL"))
+              : "",
           displayName: participant.getDisplayName() || "Без имени",
           id: participant.getId(),
           isDominantSpeaker:
@@ -231,6 +324,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
       });
 
     const audioMuted = !localAudio || localAudio.isMuted();
+    if (audioMuted) {
+      setLocalAudioLevel(0);
+    }
     const cameraTracks = localTracks.filter(
       (track) =>
         track.getType() === "video" &&
@@ -252,6 +348,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       {
         audioMuted,
         audioTrack: localAudio,
+        avatarUrl: localAvatarRef.current,
         displayName: localNameRef.current,
         id: localIdRef.current,
         isDominantSpeaker:
@@ -264,7 +361,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       },
       ...remote,
     ]);
-  }, []);
+  }, [watchLocalAudioLevel]);
 
   const scheduleParticipantSync = useCallback(() => {
     syncParticipants();
@@ -301,12 +398,17 @@ export function useJitsiConference(roomName: string): ConferenceController {
     async (options: JoinOptions) => {
       setError(null);
       localNameRef.current = options.displayName;
+      localAvatarRef.current = options.avatarDataUrl;
       disposedRef.current = false;
+      setChatMessages([]);
 
       if (isDemo) {
         setStatus("loading");
         await new Promise((resolve) => window.setTimeout(resolve, 420));
-        const demoParticipants = createDemoParticipants(options.displayName);
+        const demoParticipants = createDemoParticipants(
+          options.displayName,
+          options.avatarDataUrl,
+        );
 
         demoParticipants[0].audioMuted = options.startAudioMuted;
         demoParticipants[0].videoMuted = options.startVideoMuted;
@@ -325,11 +427,19 @@ export function useJitsiConference(roomName: string): ConferenceController {
           serverUrl,
           roomName,
         );
+        const preferences = readMediaPreferences();
 
         if (disposedRef.current) {
           return;
         }
 
+        audioInputIdRef.current = preferences.audioInputId;
+        videoInputIdRef.current = preferences.videoInputId;
+        noiseSuppressionEnabledRef.current =
+          preferences.noiseSuppressionEnabled;
+        setAudioInputIdState(preferences.audioInputId);
+        setVideoInputIdState(preferences.videoInputId);
+        setNoiseSuppressionState(preferences.noiseSuppressionEnabled);
         libraryRef.current = library;
         library.init({
           disableAudioLevels: false,
@@ -359,7 +469,26 @@ export function useJitsiConference(roomName: string): ConferenceController {
             ] as const
           ).map(async ({ device, startMuted }) => {
             try {
-              const track = await createLocalTrack(library, device);
+              const deviceId =
+                device === "audio"
+                  ? preferences.audioInputId
+                  : preferences.videoInputId;
+              const track = await createLocalTrack(library, device, deviceId);
+
+              if (
+                device === "audio" &&
+                preferences.noiseSuppressionEnabled &&
+                track.setEffect
+              ) {
+                await track.setEffect(
+                  new JitsiNoiseSuppressionEffect(
+                    new URL(
+                      "/libs/noise-suppressor-worklet.min.js",
+                      serverUrl,
+                    ).toString(),
+                  ),
+                );
+              }
 
               if (startMuted) {
                 await track.mute();
@@ -413,7 +542,13 @@ export function useJitsiConference(roomName: string): ConferenceController {
             const conferenceEvents = library.events.conference;
 
             conferenceRef.current = conference;
+            localIdRef.current =
+              conference.myUserId?.() || localIdRef.current;
             conference.setDisplayName(options.displayName);
+            conference.setLocalParticipantProperty?.(
+              "avatarURL",
+              options.avatarDataUrl,
+            );
 
             const resyncEvents = [
               conferenceEvents.TRACK_ADDED,
@@ -423,6 +558,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
               conferenceEvents.USER_LEFT,
               conferenceEvents.USER_ROLE_CHANGED,
               conferenceEvents.DISPLAY_NAME_CHANGED,
+              conferenceEvents.PARTICIPANT_PROPERTY_CHANGED,
             ].filter(Boolean);
 
             resyncEvents.forEach((eventName) =>
@@ -437,6 +573,63 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 syncParticipants();
               },
             );
+            if (conferenceEvents.MESSAGE_RECEIVED) {
+              conference.on(
+                conferenceEvents.MESSAGE_RECEIVED,
+                (rawSenderId, rawText, rawTimestamp) => {
+                  if (
+                    typeof rawSenderId !== "string" ||
+                    typeof rawText !== "string"
+                  ) {
+                    return;
+                  }
+
+                  if (rawSenderId === localIdRef.current) {
+                    return;
+                  }
+
+                  const sender = conference
+                    .getParticipants()
+                    .find(
+                      (participant) =>
+                        participant.getId() === rawSenderId,
+                    );
+                  const numericTimestamp =
+                    typeof rawTimestamp === "number"
+                      ? rawTimestamp
+                      : Number.NaN;
+                  const parsedTimestamp =
+                    typeof rawTimestamp === "string" && rawTimestamp
+                      ? Date.parse(rawTimestamp)
+                      : Number.NaN;
+                  const timestamp =
+                    Number.isFinite(numericTimestamp) &&
+                    numericTimestamp > 0
+                      ? numericTimestamp < 1_000_000_000_000
+                        ? numericTimestamp * 1000
+                        : numericTimestamp
+                      : Number.isFinite(parsedTimestamp)
+                        ? parsedTimestamp
+                        : Date.now();
+
+                  setChatMessages((messages) => [
+                    ...messages,
+                    {
+                      avatarUrl:
+                        typeof sender?.getProperty?.("avatarURL") === "string"
+                          ? String(sender.getProperty?.("avatarURL"))
+                          : "",
+                      id: `${rawSenderId}-${timestamp}-${messages.length}`,
+                      isLocal: false,
+                      senderId: rawSenderId,
+                      senderName: sender?.getDisplayName() || "Без имени",
+                      text: rawText,
+                      timestamp,
+                    },
+                  ]);
+                },
+              );
+            }
             if (conferenceEvents.TRACK_UNMUTE_REJECTED) {
               conference.on(
                 conferenceEvents.TRACK_UNMUTE_REJECTED,
@@ -620,7 +813,22 @@ export function useJitsiConference(roomName: string): ConferenceController {
           await currentTrack.mute();
         }
       } else {
-        const newTrack = await createLocalTrack(library, "audio");
+        const newTrack = await createLocalTrack(
+          library,
+          "audio",
+          audioInputIdRef.current,
+        );
+
+        if (noiseSuppressionEnabledRef.current && newTrack.setEffect) {
+          await newTrack.setEffect(
+            new JitsiNoiseSuppressionEffect(
+              new URL(
+                "/libs/noise-suppressor-worklet.min.js",
+                serverUrl,
+              ).toString(),
+            ),
+          );
+        }
 
         if (
           disposedRef.current ||
@@ -643,7 +851,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setMediaBusy("audio", false);
       syncParticipants();
     }
-  }, [isDemo, setMediaBusy, syncParticipants]);
+  }, [isDemo, serverUrl, setMediaBusy, syncParticipants]);
 
   const toggleVideo = useCallback(async () => {
     if (isDemo) {
@@ -686,7 +894,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
           await currentTrack.mute();
         }
       } else {
-        const newTrack = await createLocalTrack(library, "video");
+        const newTrack = await createLocalTrack(
+          library,
+          "video",
+          videoInputIdRef.current,
+        );
 
         if (
           disposedRef.current ||
@@ -802,11 +1014,201 @@ export function useJitsiConference(roomName: string): ConferenceController {
     }
   }, [isDemo, setMediaBusy, syncParticipants]);
 
+  const replaceInputTrack = useCallback(
+    async (device: "audio" | "video", deviceId: string) => {
+      if (device === "audio") {
+        audioInputIdRef.current = deviceId;
+        setAudioInputIdState(deviceId);
+      } else {
+        videoInputIdRef.current = deviceId;
+        setVideoInputIdState(deviceId);
+      }
+      persistMediaPreferences();
+
+      if (isDemo) {
+        return;
+      }
+
+      const conference = conferenceRef.current;
+      const library = libraryRef.current;
+
+      if (!conference || !library) {
+        return;
+      }
+
+      setError(null);
+      setIsDeviceSwitchBusy(true);
+      setMediaBusy(device, true);
+
+      try {
+        const oldTrack = conference
+          .getLocalTracks(device)
+          .find(
+            (candidate) =>
+              device === "audio" ||
+              candidate.getVideoType?.() !== "desktop",
+          );
+        const newTrack = await createLocalTrack(library, device, deviceId);
+
+        if (oldTrack?.isMuted()) {
+          await newTrack.mute();
+        }
+
+        if (
+          device === "audio" &&
+          noiseSuppressionEnabledRef.current &&
+          newTrack.setEffect
+        ) {
+          await newTrack.setEffect(
+            new JitsiNoiseSuppressionEffect(
+              new URL(
+                "/libs/noise-suppressor-worklet.min.js",
+                serverUrl,
+              ).toString(),
+            ),
+          );
+        }
+
+        if (
+          disposedRef.current ||
+          conferenceRef.current !== conference
+        ) {
+          await newTrack.dispose();
+          return;
+        }
+
+        try {
+          if (oldTrack && conference.replaceTrack) {
+            await conference.replaceTrack(oldTrack, newTrack);
+          } else {
+            await conference.addTrack(newTrack);
+            if (oldTrack) {
+              await conference.removeTrack(oldTrack);
+            }
+          }
+        } catch (publishError) {
+          await newTrack.dispose().catch(() => undefined);
+          throw publishError;
+        }
+
+        await oldTrack?.dispose().catch(() => undefined);
+      } catch (caughtError) {
+        setError(mediaErrorMessage(device, caughtError));
+      } finally {
+        setMediaBusy(device, false);
+        setIsDeviceSwitchBusy(false);
+        syncParticipants();
+      }
+    },
+    [
+      isDemo,
+      persistMediaPreferences,
+      serverUrl,
+      setMediaBusy,
+      syncParticipants,
+    ],
+  );
+
+  const setAudioInputDevice = useCallback(
+    (deviceId: string) => replaceInputTrack("audio", deviceId),
+    [replaceInputTrack],
+  );
+
+  const setVideoInputDevice = useCallback(
+    (deviceId: string) => replaceInputTrack("video", deviceId),
+    [replaceInputTrack],
+  );
+
+  const setNoiseSuppressionEnabled = useCallback(
+    async (enabled: boolean) => {
+      noiseSuppressionEnabledRef.current = enabled;
+      setNoiseSuppressionState(enabled);
+      persistMediaPreferences();
+
+      if (isDemo) {
+        return;
+      }
+
+      const audioTrack = conferenceRef.current
+        ?.getLocalTracks("audio")
+        .find(Boolean);
+
+      if (!audioTrack?.setEffect) {
+        if (enabled) {
+          setNoiseSuppressionState(false);
+          noiseSuppressionEnabledRef.current = false;
+          persistMediaPreferences();
+          setError(
+            "Эта сборка Jitsi не поддерживает шумоподавление для аудиотрека.",
+          );
+        }
+        return;
+      }
+
+      setError(null);
+      setIsDeviceSwitchBusy(true);
+      setMediaBusy("audio", true);
+
+      try {
+        await audioTrack.setEffect(
+          enabled
+            ? new JitsiNoiseSuppressionEffect(
+                new URL(
+                  "/libs/noise-suppressor-worklet.min.js",
+                  serverUrl,
+                ).toString(),
+              )
+            : undefined,
+        );
+      } catch {
+        noiseSuppressionEnabledRef.current = !enabled;
+        setNoiseSuppressionState(!enabled);
+        persistMediaPreferences();
+        setError("Не удалось переключить шумоподавление.");
+      } finally {
+        setMediaBusy("audio", false);
+        setIsDeviceSwitchBusy(false);
+      }
+    },
+    [isDemo, persistMediaPreferences, serverUrl, setMediaBusy],
+  );
+
+  const sendChatMessage = useCallback((rawText: string) => {
+    const text = rawText.trim();
+
+    if (!text) {
+      return;
+    }
+
+    const conference = conferenceRef.current;
+
+    if (!isDemo && !conference?.sendTextMessage) {
+      setError("Чат недоступен в этой сборке Jitsi.");
+      return;
+    }
+
+    conference?.sendTextMessage?.(text);
+    setChatMessages((messages) => [
+      ...messages,
+      {
+        avatarUrl: localAvatarRef.current,
+        id: `local-${Date.now()}-${messages.length}`,
+        isLocal: true,
+        senderId: localIdRef.current,
+        senderName: localNameRef.current,
+        text,
+        timestamp: Date.now(),
+      },
+    ]);
+  }, [isDemo]);
+
   const leave = useCallback(async () => {
     if (!isDemo) {
       await teardown();
     }
     setParticipants([]);
+    setChatMessages([]);
+    setLocalAudioLevel(0);
     setStatus("left");
   }, [isDemo, teardown]);
 
@@ -820,14 +1222,24 @@ export function useJitsiConference(roomName: string): ConferenceController {
   );
 
   return {
+    audioInputId,
+    chatMessages,
     error,
     isAudioBusy,
     isAudioMuted,
     isDemo,
+    isDeviceSwitchBusy,
     isScreenShareBusy,
     isScreenSharing,
     isVideoBusy,
     isVideoMuted,
+    localAudioLevel,
+    noiseSuppressionEnabled,
+    noiseSuppressionSupported,
+    sendChatMessage,
+    setAudioInputDevice,
+    setNoiseSuppressionEnabled,
+    setVideoInputDevice,
     join,
     leave,
     participants,
@@ -835,5 +1247,6 @@ export function useJitsiConference(roomName: string): ConferenceController {
     toggleAudio,
     toggleScreenShare,
     toggleVideo,
+    videoInputId,
   };
 }

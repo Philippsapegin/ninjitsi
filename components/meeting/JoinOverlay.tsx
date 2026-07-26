@@ -13,6 +13,9 @@ import {
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
 import type { MeetingStatus } from "@/lib/jitsi/types";
 import { Brand } from "@/components/brand/Brand";
+import { ProfileEditor } from "@/components/profile/ProfileEditor";
+import { saveClientProfile } from "@/lib/profiles";
+import type { ProfileDraft } from "@/lib/profiles";
 import styles from "./JoinOverlay.module.css";
 
 interface JoinOverlayProps {
@@ -32,7 +35,11 @@ export function JoinOverlay({
   roomName,
   status,
 }: JoinOverlayProps) {
-  const [displayName, setDisplayName] = useState(initialDetails.displayName);
+  const [profile, setProfile] = useState<ProfileDraft>({
+    avatarDataUrl: initialDetails.avatarDataUrl,
+    displayName: initialDetails.displayName,
+    profileId: initialDetails.profileId,
+  });
   const [password, setPassword] = useState(initialDetails.password);
   const [startAudioMuted, setStartAudioMuted] = useState(
     initialDetails.startAudioMuted,
@@ -45,13 +52,17 @@ export function JoinOverlay({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!displayName.trim() || isBusy) {
+    if (!profile.displayName.trim() || isBusy) {
       return;
     }
 
+    const savedProfile = saveClientProfile(profile);
+
     void onJoin({
-      displayName: displayName.trim(),
+      avatarDataUrl: savedProfile.avatarDataUrl,
+      displayName: savedProfile.displayName,
       password,
+      profileId: savedProfile.id,
       startAudioMuted,
       startVideoMuted,
     });
@@ -89,16 +100,7 @@ export function JoinOverlay({
           </div>
         ) : (
           <form onSubmit={submit}>
-            <label className={styles.field}>
-              <span>Ваше имя</span>
-              <input
-                autoFocus
-                autoComplete="name"
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="Например, Алексей"
-                value={displayName}
-              />
-            </label>
+            <ProfileEditor autoFocus onChange={setProfile} value={profile} />
 
             <label className={styles.field}>
               <span className={styles.optionalLabel}>
@@ -150,7 +152,7 @@ export function JoinOverlay({
 
             <button
               className={styles.joinButton}
-              disabled={!displayName.trim()}
+              disabled={!profile.displayName.trim()}
               type="submit"
             >
               Войти в комнату

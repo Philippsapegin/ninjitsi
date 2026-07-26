@@ -12,11 +12,9 @@
   padding: 8px;
   align-items: center;
   gap: 7px;
-  background: rgba(20, 24, 29, 0.94);
-  border: 1px solid var(--line-strong);
-  border-radius: 20px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(18px);
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
 }
 
 .control {
@@ -26,18 +24,17 @@
   height: 50px;
   place-items: center;
   color: var(--text);
-  background: #22272e;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
   cursor: pointer;
   transition:
-    background 150ms ease,
     color 150ms ease,
     transform 150ms ease;
 }
 
 .control:hover {
-  background: #2b3139;
+  color: var(--accent);
   transform: translateY(-1px);
 }
 
@@ -78,25 +75,23 @@
 
 .control.off {
   color: #ffb0aa;
-  background: rgba(255, 107, 98, 0.1);
-  border-color: rgba(255, 107, 98, 0.18);
+  background: transparent;
 }
 
 .control.active {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: transparent;
+  color: var(--accent);
+  background: transparent;
 }
 
 .control.danger {
   width: 62px;
-  color: var(--danger-ink);
-  background: var(--danger);
-  border-color: transparent;
+  color: var(--danger);
+  background: transparent;
 }
 
 .control.danger:hover {
-  background: #ff7a72;
+  color: #ff8881;
+  background: transparent;
 }
 
 .divider {
@@ -104,6 +99,22 @@
   height: 27px;
   margin: 0 3px;
   background: var(--line-strong);
+}
+
+.audioReactive::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+  inset: 3px;
+  border: calc(1px + var(--audio-level) * 2px) solid
+    rgba(216, 255, 99, calc(var(--audio-level) * 0.92));
+  border-radius: 12px;
+  opacity: clamp(0, calc((var(--audio-level) - 0.035) * 14), 1);
+  transform: scale(calc(0.94 + var(--audio-level) * 0.12));
+  transition:
+    border-width 70ms linear,
+    opacity 90ms linear,
+    transform 70ms linear;
 }
 
 @keyframes spin {

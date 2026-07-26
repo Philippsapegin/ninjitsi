@@ -14,6 +14,7 @@
     "smoke:rooms": "node scripts/room-smoke.mjs",
     "smoke:visual": "node scripts/visual-smoke.mjs",
     "smoke:jitsi": "node scripts/jitsi-smoke.mjs",
+    "smoke:profiles": "node scripts/profile-smoke.mjs",
     "stack:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 prepare",
     "stack:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 up",
     "stack:down": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 down",

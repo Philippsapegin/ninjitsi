@@ -85,6 +85,26 @@ try {
     waitUntil: "networkidle",
   });
   await page.getByLabel("Ваше имя").fill("Ninjitsi Smoke");
+  const avatarDataUrl = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext("2d");
+
+    context.fillStyle = "#7557d6";
+    context.fillRect(0, 0, 128, 128);
+    return canvas.toDataURL("image/png");
+  });
+
+  await page.locator('input[type="file"]').setInputFiles({
+    buffer: Buffer.from(avatarDataUrl.split(",")[1], "base64"),
+    mimeType: "image/png",
+    name: "avatar.png",
+  });
+  await page
+    .getByRole("button", { name: "Сменить аватарку" })
+    .waitFor();
   await page.getByRole("button", { name: "Войти в комнату" }).click();
   await page
     .getByRole("button", { name: "Завершить звонок" })
@@ -92,13 +112,29 @@ try {
   await page
     .getByRole("dialog", { name: "Вход в комнату" })
     .waitFor({ state: "hidden", timeout: 90_000 });
-  await page.locator("article").first().waitFor({ timeout: 30_000 });
+  await page.locator("[data-video-tile]").first().waitFor({ timeout: 30_000 });
   await page
     .getByRole("button", { name: "Выключить микрофон" })
     .waitFor({ timeout: 30_000 });
   await page
     .getByRole("button", { name: "Выключить камеру" })
     .waitFor({ timeout: 30_000 });
+  await page.waitForFunction(
+    () => {
+      const microphoneButton = document.querySelector(
+        'button[aria-label="Выключить микрофон"]',
+      );
+
+      return (
+        microphoneButton instanceof HTMLElement &&
+        Number.parseFloat(
+          microphoneButton.style.getPropertyValue("--audio-level"),
+        ) > 0
+      );
+    },
+    undefined,
+    { timeout: 15_000 },
+  );
 
   const observerPage = await context.newPage();
 
@@ -123,10 +159,13 @@ try {
   await observerPage
     .getByRole("dialog", { name: "Вход в комнату" })
     .waitFor({ state: "hidden", timeout: 90_000 });
-  await observerPage.locator("article").nth(1).waitFor({ timeout: 30_000 });
+  await observerPage
+    .locator("[data-video-tile]")
+    .nth(1)
+    .waitFor({ timeout: 30_000 });
 
   const remoteTile = observerPage
-    .locator("article")
+    .locator("[data-video-tile]")
     .filter({ hasText: "Ninjitsi Smoke" });
 
   await remoteTile.locator("video").waitFor({ timeout: 30_000 });
@@ -134,6 +173,69 @@ try {
     state: "attached",
     timeout: 30_000,
   });
+
+  const chatProbe = `Проверка чата ${Date.now()}`;
+
+  await page.getByLabel("Сообщение в чат").fill(chatProbe);
+  await page
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  await observerPage
+    .getByText(chatProbe, { exact: true })
+    .waitFor({ timeout: 30_000 });
+  if (
+    (await page.getByText(chatProbe, { exact: true }).count()) !== 1 ||
+    (await observerPage.getByText(chatProbe, { exact: true }).count()) !== 1
+  ) {
+    throw new Error("Локальное сообщение задублировалось в чате");
+  }
+  const chatReply = `Ответ ${Date.now()}`;
+
+  await observerPage.getByLabel("Сообщение в чат").fill(chatReply);
+  await observerPage
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  await page
+    .getByText(chatReply, { exact: true })
+    .waitFor({ timeout: 30_000 });
+
+  await page.getByRole("button", { name: "Настройки" }).click();
+  const settingsDialog = page.getByRole("dialog", {
+    name: "Настройки устройств",
+  });
+
+  await settingsDialog.waitFor();
+  const microphoneOptions = await settingsDialog
+    .getByLabel("Выбрать микрофон")
+    .locator("option")
+    .count();
+  const cameraOptions = await settingsDialog
+    .getByLabel("Выбрать камеру")
+    .locator("option")
+    .count();
+
+  if (microphoneOptions < 1 || cameraOptions < 1) {
+    throw new Error(
+      `Настройки не показали fake-устройства: microphones=${microphoneOptions}, cameras=${cameraOptions}`,
+    );
+  }
+
+  const noiseSuppression = settingsDialog.getByRole("switch", {
+    name: "Шумоподавление",
+  });
+
+  if (await noiseSuppression.isEnabled()) {
+    await noiseSuppression.click();
+    await page.waitForTimeout(1000);
+
+    if ((await noiseSuppression.getAttribute("aria-checked")) !== "true") {
+      throw new Error("Шумоподавление не включилось");
+    }
+  }
+
+  await settingsDialog
+    .getByRole("button", { name: "Закрыть настройки" })
+    .click();
 
   await page
     .getByRole("button", { name: "Выключить микрофон" })
@@ -164,6 +266,7 @@ try {
     state: "hidden",
     timeout: 30_000,
   });
+  await remoteTile.locator("img").waitFor({ timeout: 30_000 });
   await page
     .getByRole("button", { name: "Включить камеру" })
     .click();
@@ -272,14 +375,19 @@ try {
         jitsiUrl,
         media: {
           camera: "toggle passed",
+          avatarPropagation: "passed",
+          chat: "bidirectional transport passed",
+          deviceSettings: "enumeration passed",
           microphone: "toggle passed",
+          microphoneLevel: "reactive outline passed",
+          noiseSuppression: "toggle passed",
           remotePropagation: "passed",
           recoveryAfterInitialDenial: "passed",
           screenShare: "start/stop passed",
         },
         roomName,
         status: "joined",
-        tileCount: await page.locator("article").count(),
+        tileCount: await page.locator("[data-video-tile]").count(),
       },
       null,
       2,

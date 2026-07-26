@@ -22,13 +22,17 @@ import { authorizeRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import { useRoomApiEnabled } from "@/lib/runtimeConfig";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
+import { ChatSidebar } from "./ChatSidebar";
 import { JoinOverlay } from "./JoinOverlay";
+import { SettingsPanel } from "./SettingsPanel";
 import { VideoGrid } from "./VideoGrid";
 import styles from "./MeetingRoom.module.css";
 
 const EMPTY_JOIN_DETAILS: JoinOptions = {
+  avatarDataUrl: "",
   displayName: "",
   password: "",
+  profileId: "",
   startAudioMuted: false,
   startVideoMuted: false,
 };
@@ -281,16 +285,24 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         </div>
       </header>
 
-      <section className={styles.stage}>
-        {conference.participants.length > 0 ? (
-          <VideoGrid participants={conference.participants} />
-        ) : (
-          <div className={styles.emptyStage}>
-            <Radio size={26} />
-            <span>Ожидаем участников</span>
-          </div>
-        )}
-      </section>
+      <div className={styles.workspace}>
+        <ChatSidebar
+          disabled={conference.status !== "joined"}
+          messages={conference.chatMessages}
+          onSend={conference.sendChatMessage}
+        />
+
+        <section className={styles.stage}>
+          {conference.participants.length > 0 ? (
+            <VideoGrid participants={conference.participants} />
+          ) : (
+            <div className={styles.emptyStage}>
+              <Radio size={26} />
+              <span>Ожидаем участников</span>
+            </div>
+          )}
+        </section>
+      </div>
 
       <CallControls
         isAudioBusy={conference.isAudioBusy}
@@ -299,10 +311,22 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         isScreenSharing={conference.isScreenSharing}
         isVideoBusy={conference.isVideoBusy}
         isVideoMuted={conference.isVideoMuted}
+        localAudioLevel={conference.localAudioLevel}
         onHangup={() => void hangup()}
         onToggleAudio={() => void conference.toggleAudio()}
         onToggleScreenShare={() => void conference.toggleScreenShare()}
         onToggleVideo={() => void conference.toggleVideo()}
+      />
+
+      <SettingsPanel
+        audioInputId={conference.audioInputId}
+        busy={conference.isDeviceSwitchBusy}
+        noiseSuppressionEnabled={conference.noiseSuppressionEnabled}
+        noiseSuppressionSupported={conference.noiseSuppressionSupported}
+        onAudioInputChange={conference.setAudioInputDevice}
+        onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
+        onVideoInputChange={conference.setVideoInputDevice}
+        videoInputId={conference.videoInputId}
       />
 
       <AudioSinks participants={conference.participants} />
@@ -323,7 +347,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           error={admissionError || conference.error}
           initialDetails={joinDetails}
           isDemo={conference.isDemo}
-          key={`${joinDetails.displayName}-${joinDetails.password}-${conference.status === "failed"}`}
+          key={`${joinDetails.profileId}-${joinDetails.displayName}-${joinDetails.password}-${conference.status === "failed"}`}
           onJoin={join}
           roomName={roomName}
           status={isAdmissionBusy ? "loading" : conference.status}
