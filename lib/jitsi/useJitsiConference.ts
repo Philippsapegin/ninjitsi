@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isGridLabRoom } from "@/lib/gridLab";
 import { useJitsiServerUrl } from "@/lib/runtimeConfig";
 import { loadJitsiRuntime } from "./loader";
 import type {
@@ -22,9 +21,12 @@ export interface JoinOptions {
 
 interface ConferenceController {
   error: string | null;
+  isAudioBusy: boolean;
   isAudioMuted: boolean;
   isDemo: boolean;
+  isScreenShareBusy: boolean;
   isScreenSharing: boolean;
+  isVideoBusy: boolean;
   isVideoMuted: boolean;
   join: (options: JoinOptions) => Promise<void>;
   leave: () => Promise<void>;
@@ -44,22 +46,102 @@ const demoNames = [
   "Сергей",
 ];
 
-function pickPreferredVideo(tracks: JitsiTrackLike[]) {
-  const videoTracks = tracks.filter((track) => track.getType() === "video");
+type LocalMediaDevice = "audio" | "video" | "desktop";
 
-  return (
-    videoTracks.find((track) => track.getVideoType?.() === "desktop") ??
-    videoTracks[0]
-  );
+function mediaName(device: LocalMediaDevice) {
+  if (device === "audio") {
+    return "микрофон";
+  }
+
+  return device === "video" ? "камеру" : "демонстрацию экрана";
 }
 
-function createDemoParticipants(
-  displayName: string,
-  roomName: string,
-): ParticipantView[] {
-  const people = isGridLabRoom(roomName)
-    ? [displayName]
-    : [displayName, ...demoNames];
+function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
+  const rawError =
+    caughtError && typeof caughtError === "object"
+      ? `${"name" in caughtError ? String(caughtError.name) : ""} ${
+          "message" in caughtError ? String(caughtError.message) : ""
+        }`
+      : String(caughtError ?? "");
+  const normalized = rawError.toLowerCase();
+  const target = mediaName(device);
+
+  if (
+    normalized.includes("permission") ||
+    normalized.includes("notallowed") ||
+    normalized.includes("denied")
+  ) {
+    return `Нет разрешения на ${target}. Разрешите доступ в адресной строке Chrome.`;
+  }
+
+  if (
+    normalized.includes("notfound") ||
+    normalized.includes("devicesnotfound") ||
+    normalized.includes("no device")
+  ) {
+    return `Не удалось найти ${target}. Проверьте подключение устройства.`;
+  }
+
+  if (
+    normalized.includes("notreadable") ||
+    normalized.includes("trackstart") ||
+    normalized.includes("could not start")
+  ) {
+    return `Не удалось запустить ${target}: возможно, устройство занято другим приложением.`;
+  }
+
+  if (
+    device === "desktop" &&
+    (normalized.includes("abort") || normalized.includes("cancel"))
+  ) {
+    return "Выбор экрана отменён.";
+  }
+
+  return `Не удалось подключить ${target}.`;
+}
+
+async function createLocalTrack(
+  library: JitsiMeetJSLibrary,
+  device: LocalMediaDevice,
+) {
+  const tracks = await library.createLocalTracks({
+    devices: [device],
+    ...(device === "video" ? { resolution: 720 } : {}),
+  });
+  const track = tracks.find((candidate) =>
+    device === "desktop"
+      ? candidate.getVideoType?.() === "desktop"
+      : candidate.getType() === device,
+  );
+  const unusedTracks = tracks.filter((candidate) => candidate !== track);
+
+  await Promise.allSettled(
+    unusedTracks.map((unusedTrack) => unusedTrack.dispose()),
+  );
+
+  if (!track) {
+    throw new Error(`Jitsi did not create a ${device} track`);
+  }
+
+  return track;
+}
+
+function pickPreferredVideo(tracks: JitsiTrackLike[]) {
+  const videoTracks = tracks.filter((track) => track.getType() === "video");
+  const activeDesktop = videoTracks.find(
+    (track) =>
+      track.getVideoType?.() === "desktop" &&
+      !track.isMuted(),
+  );
+  const camera = videoTracks.find(
+    (track) => track.getVideoType?.() !== "desktop",
+  );
+
+  return activeDesktop ?? camera ?? videoTracks[0];
+}
+
+function createDemoParticipants(displayName: string): ParticipantView[] {
+  const people = [displayName, ...demoNames];
 
   return people.map((name, index) => ({
     audioMuted: index === 3,
@@ -79,8 +161,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const [status, setStatus] = useState<MeetingStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [participants, setParticipants] = useState<ParticipantView[]>([]);
+  const [isAudioBusy, setIsAudioBusy] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
+  const [isVideoBusy, setIsVideoBusy] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
+  const [isScreenShareBusy, setIsScreenShareBusy] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const connectionRef = useRef<JitsiConnectionLike | null>(null);
   const conferenceRef = useRef<JitsiConferenceLike | null>(null);
@@ -90,6 +175,25 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const desktopRemovalRef = useRef(new WeakSet<JitsiTrackLike>());
+  const audioBusyRef = useRef(false);
+  const videoBusyRef = useRef(false);
+  const screenShareBusyRef = useRef(false);
+
+  const setMediaBusy = useCallback(
+    (device: LocalMediaDevice, busy: boolean) => {
+      if (device === "audio") {
+        audioBusyRef.current = busy;
+        setIsAudioBusy(busy);
+      } else if (device === "video") {
+        videoBusyRef.current = busy;
+        setIsVideoBusy(busy);
+      } else {
+        screenShareBusyRef.current = busy;
+        setIsScreenShareBusy(busy);
+      }
+    },
+    [],
+  );
 
   const syncParticipants = useCallback(() => {
     const conference = conferenceRef.current;
@@ -119,7 +223,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
           isLocal: false,
           isModerator: participant.getRole() === "moderator",
           isScreenSharing: videoTrack?.getVideoType?.() === "desktop",
-          videoMuted: participant.isVideoMuted(),
+          videoMuted: videoTrack
+            ? videoTrack.isMuted()
+            : participant.isVideoMuted(),
           videoTrack,
         };
       });
@@ -135,7 +241,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
     const sharing = localTracks.some(
       (track) =>
         track.getType() === "video" &&
-        track.getVideoType?.() === "desktop",
+        track.getVideoType?.() === "desktop" &&
+        !track.isMuted(),
     );
 
     setIsAudioMuted(audioMuted);
@@ -152,12 +259,17 @@ export function useJitsiConference(roomName: string): ConferenceController {
         isLocal: true,
         isModerator: conference.isModerator(),
         isScreenSharing: localVideo?.getVideoType?.() === "desktop",
-        videoMuted,
+        videoMuted: localVideo ? localVideo.isMuted() : true,
         videoTrack: localVideo,
       },
       ...remote,
     ]);
   }, []);
+
+  const scheduleParticipantSync = useCallback(() => {
+    syncParticipants();
+    queueMicrotask(syncParticipants);
+  }, [syncParticipants]);
 
   const teardown = useCallback(async () => {
     disposedRef.current = true;
@@ -166,6 +278,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
     conferenceRef.current = null;
     connectionRef.current = null;
+    setMediaBusy("audio", false);
+    setMediaBusy("video", false);
+    setMediaBusy("desktop", false);
 
     if (conference) {
       const tracks = conference.getLocalTracks();
@@ -180,7 +295,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     }
 
     connection?.disconnect();
-  }, []);
+  }, [setMediaBusy]);
 
   const join = useCallback(
     async (options: JoinOptions) => {
@@ -191,10 +306,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       if (isDemo) {
         setStatus("loading");
         await new Promise((resolve) => window.setTimeout(resolve, 420));
-        const demoParticipants = createDemoParticipants(
-          options.displayName,
-          roomName,
-        );
+        const demoParticipants = createDemoParticipants(options.displayName);
 
         demoParticipants[0].audioMuted = options.startAudioMuted;
         demoParticipants[0].videoMuted = options.startVideoMuted;
@@ -206,6 +318,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       }
 
       setStatus("loading");
+      let discardInitialTracks: (() => void) | undefined;
 
       try {
         const { config, library } = await loadJitsiRuntime(
@@ -227,25 +340,59 @@ export function useJitsiConference(roomName: string): ConferenceController {
           library.setLogLevel(library.logLevels.ERROR);
         }
 
-        const localTracksPromise = library
-          .createLocalTracks({
-            devices: ["audio", "video"],
-            resolution: 720,
-          })
-          .then(async (tracks) => {
-            await Promise.all(
-              tracks.map(async (track) => {
-                const shouldStartMuted =
-                  (track.getType() === "audio" && options.startAudioMuted) ||
-                  (track.getType() === "video" && options.startVideoMuted);
+        setIsAudioMuted(options.startAudioMuted);
+        setIsVideoMuted(options.startVideoMuted);
+        setMediaBusy("audio", true);
+        setMediaBusy("video", true);
 
-                if (shouldStartMuted) {
-                  await track.mute?.();
-                }
-              }),
+        const initialTracksPromise = Promise.all(
+          (
+            [
+              {
+                device: "audio",
+                startMuted: options.startAudioMuted,
+              },
+              {
+                device: "video",
+                startMuted: options.startVideoMuted,
+              },
+            ] as const
+          ).map(async ({ device, startMuted }) => {
+            try {
+              const track = await createLocalTrack(library, device);
+
+              if (startMuted) {
+                await track.mute();
+              }
+
+              return { device, ok: true as const, track };
+            } catch (trackError) {
+              return {
+                device,
+                error: trackError,
+                ok: false as const,
+              };
+            }
+          }),
+        );
+        let initialTracksClaimed = false;
+
+        discardInitialTracks = () => {
+          if (initialTracksClaimed) {
+            return;
+          }
+
+          initialTracksClaimed = true;
+          void initialTracksPromise.then(async (results) => {
+            await Promise.allSettled(
+              results.flatMap((result) =>
+                result.ok ? [result.track.dispose()] : [],
+              ),
             );
-            return tracks;
+            setMediaBusy("audio", false);
+            setMediaBusy("video", false);
           });
+        };
 
         const connection = new library.JitsiConnection(null, null, config);
         const connectionEvents = library.events.connection;
@@ -256,6 +403,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         connection.addEventListener(
           connectionEvents.CONNECTION_ESTABLISHED,
           async (...eventArguments) => {
+            initialTracksClaimed = true;
             localIdRef.current =
               typeof eventArguments[0] === "string"
                 ? eventArguments[0]
@@ -278,7 +426,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
             ].filter(Boolean);
 
             resyncEvents.forEach((eventName) =>
-              conference.on(eventName, syncParticipants),
+              conference.on(eventName, scheduleParticipantSync),
             );
 
             conference.on(
@@ -289,6 +437,17 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 syncParticipants();
               },
             );
+            if (conferenceEvents.TRACK_UNMUTE_REJECTED) {
+              conference.on(
+                conferenceEvents.TRACK_UNMUTE_REJECTED,
+                () => {
+                  setError(
+                    "Сервер запретил включить медиапоток. Возможно, в комнате действует модерация.",
+                  );
+                  syncParticipants();
+                },
+              );
+            }
 
             conference.on(conferenceEvents.CONNECTION_INTERRUPTED, () =>
               setStatus("reconnecting"),
@@ -324,13 +483,54 @@ export function useJitsiConference(roomName: string): ConferenceController {
               },
             );
 
-            const localTracks = await localTracksPromise;
-
-            await Promise.all(
-              localTracks.map((track) => conference.addTrack(track)),
-            );
             syncParticipants();
             conference.join(options.password);
+
+            void initialTracksPromise.then(async (results) => {
+              const isCurrentConference =
+                !disposedRef.current &&
+                conferenceRef.current === conference;
+
+              if (!isCurrentConference) {
+                await Promise.allSettled(
+                  results.flatMap((result) =>
+                    result.ok ? [result.track.dispose()] : [],
+                  ),
+                );
+                setMediaBusy("audio", false);
+                setMediaBusy("video", false);
+                return;
+              }
+
+              const failures: string[] = [];
+
+              for (const result of results) {
+                if (!result.ok) {
+                  failures.push(
+                    mediaErrorMessage(result.device, result.error),
+                  );
+                  setMediaBusy(result.device, false);
+                  continue;
+                }
+
+                try {
+                  await conference.addTrack(result.track);
+                } catch (publishError) {
+                  await result.track.dispose().catch(() => undefined);
+                  failures.push(
+                    mediaErrorMessage(result.device, publishError),
+                  );
+                } finally {
+                  setMediaBusy(result.device, false);
+                }
+              }
+
+              syncParticipants();
+
+              if (failures.length > 0) {
+                setError(failures.join(" "));
+              }
+            });
           },
         );
 
@@ -343,6 +543,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
             setError(`Jitsi-сервер отклонил соединение${reason ? `: ${reason}` : ""}`);
             setStatus("failed");
+            discardInitialTracks?.();
             await teardown();
           },
         );
@@ -359,6 +560,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
         connection.connect();
       } catch (caughtError) {
+        discardInitialTracks?.();
         setError(
           caughtError instanceof Error
             ? caughtError.message
@@ -368,7 +570,15 @@ export function useJitsiConference(roomName: string): ConferenceController {
         await teardown();
       }
     },
-    [isDemo, roomName, serverUrl, syncParticipants, teardown],
+    [
+      isDemo,
+      roomName,
+      scheduleParticipantSync,
+      serverUrl,
+      setMediaBusy,
+      syncParticipants,
+      teardown,
+    ],
   );
 
   const toggleAudio = useCallback(async () => {
@@ -386,22 +596,54 @@ export function useJitsiConference(roomName: string): ConferenceController {
       return;
     }
 
-    const track = conferenceRef.current
-      ?.getLocalTracks("audio")
-      .find(Boolean);
-
-    if (!track) {
-      setError("Микрофон не был подключён при входе");
+    if (audioBusyRef.current) {
       return;
     }
 
-    if (track.isMuted()) {
-      await track.unmute?.();
-    } else {
-      await track.mute?.();
+    const conference = conferenceRef.current;
+    const library = libraryRef.current;
+
+    if (!conference || !library) {
+      return;
     }
-    syncParticipants();
-  }, [isDemo, syncParticipants]);
+
+    setError(null);
+    setMediaBusy("audio", true);
+
+    try {
+      const currentTrack = conference.getLocalTracks("audio").find(Boolean);
+
+      if (currentTrack) {
+        if (currentTrack.isMuted()) {
+          await currentTrack.unmute();
+        } else {
+          await currentTrack.mute();
+        }
+      } else {
+        const newTrack = await createLocalTrack(library, "audio");
+
+        if (
+          disposedRef.current ||
+          conferenceRef.current !== conference
+        ) {
+          await newTrack.dispose();
+          return;
+        }
+
+        try {
+          await conference.addTrack(newTrack);
+        } catch (publishError) {
+          await newTrack.dispose().catch(() => undefined);
+          throw publishError;
+        }
+      }
+    } catch (caughtError) {
+      setError(mediaErrorMessage("audio", caughtError));
+    } finally {
+      setMediaBusy("audio", false);
+      syncParticipants();
+    }
+  }, [isDemo, setMediaBusy, syncParticipants]);
 
   const toggleVideo = useCallback(async () => {
     if (isDemo) {
@@ -418,22 +660,56 @@ export function useJitsiConference(roomName: string): ConferenceController {
       return;
     }
 
-    const track = conferenceRef.current
-      ?.getLocalTracks("video")
-      .find((candidate) => candidate.getVideoType?.() !== "desktop");
-
-    if (!track) {
-      setError("Камера не была подключена при входе");
+    if (videoBusyRef.current) {
       return;
     }
 
-    if (track.isMuted()) {
-      await track.unmute?.();
-    } else {
-      await track.mute?.();
+    const conference = conferenceRef.current;
+    const library = libraryRef.current;
+
+    if (!conference || !library) {
+      return;
     }
-    syncParticipants();
-  }, [isDemo, syncParticipants]);
+
+    setError(null);
+    setMediaBusy("video", true);
+
+    try {
+      const currentTrack = conference
+        .getLocalTracks("video")
+        .find((candidate) => candidate.getVideoType?.() !== "desktop");
+
+      if (currentTrack) {
+        if (currentTrack.isMuted()) {
+          await currentTrack.unmute();
+        } else {
+          await currentTrack.mute();
+        }
+      } else {
+        const newTrack = await createLocalTrack(library, "video");
+
+        if (
+          disposedRef.current ||
+          conferenceRef.current !== conference
+        ) {
+          await newTrack.dispose();
+          return;
+        }
+
+        try {
+          await conference.addTrack(newTrack);
+        } catch (publishError) {
+          await newTrack.dispose().catch(() => undefined);
+          throw publishError;
+        }
+      }
+    } catch (caughtError) {
+      setError(mediaErrorMessage("video", caughtError));
+    } finally {
+      setMediaBusy("video", false);
+      syncParticipants();
+    }
+  }, [isDemo, setMediaBusy, syncParticipants]);
 
   const toggleScreenShare = useCallback(async () => {
     if (isDemo) {
@@ -450,6 +726,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
       return;
     }
 
+    if (screenShareBusyRef.current) {
+      return;
+    }
+
     const conference = conferenceRef.current;
     const library = libraryRef.current;
 
@@ -457,48 +737,70 @@ export function useJitsiConference(roomName: string): ConferenceController {
       return;
     }
 
-    const currentDesktop = conference
-      .getLocalTracks("video")
-      .find((track) => track.getVideoType?.() === "desktop");
-
-    if (currentDesktop) {
-      desktopRemovalRef.current.add(currentDesktop);
-      await conference.removeTrack(currentDesktop);
-      await currentDesktop.dispose();
-      syncParticipants();
-      return;
-    }
+    setError(null);
+    setMediaBusy("desktop", true);
 
     try {
-      const [desktopTrack] = await library.createLocalTracks({
-        devices: ["desktop"],
-      });
+      const currentDesktop = conference
+        .getLocalTracks("video")
+        .find((track) => track.getVideoType?.() === "desktop");
 
-      if (!desktopTrack) {
+      if (currentDesktop) {
+        desktopRemovalRef.current.add(currentDesktop);
+        try {
+          await conference.removeTrack(currentDesktop);
+        } finally {
+          await currentDesktop.dispose().catch(() => undefined);
+        }
         return;
       }
 
+      const desktopTrack = await createLocalTrack(library, "desktop");
       const stoppedEvent = library.events.track.LOCAL_TRACK_STOPPED;
 
       if (stoppedEvent) {
-        desktopTrack.addEventListener?.(stoppedEvent, async () => {
+        desktopTrack.addEventListener?.(stoppedEvent, () => {
           if (desktopRemovalRef.current.has(desktopTrack)) {
             return;
           }
 
           desktopRemovalRef.current.add(desktopTrack);
-          await conference.removeTrack(desktopTrack).catch(() => undefined);
-          await desktopTrack.dispose().catch(() => undefined);
-          syncParticipants();
+          void (async () => {
+            await conference
+              .removeTrack(desktopTrack)
+              .catch(() => undefined);
+            await desktopTrack.dispose().catch(() => undefined);
+
+            if (conferenceRef.current === conference) {
+              syncParticipants();
+            }
+          })();
         });
       }
 
-      await conference.addTrack(desktopTrack);
+      if (
+        disposedRef.current ||
+        conferenceRef.current !== conference
+      ) {
+        desktopRemovalRef.current.add(desktopTrack);
+        await desktopTrack.dispose();
+        return;
+      }
+
+      try {
+        await conference.addTrack(desktopTrack);
+      } catch (publishError) {
+        desktopRemovalRef.current.add(desktopTrack);
+        await desktopTrack.dispose().catch(() => undefined);
+        throw publishError;
+      }
+    } catch (caughtError) {
+      setError(mediaErrorMessage("desktop", caughtError));
+    } finally {
+      setMediaBusy("desktop", false);
       syncParticipants();
-    } catch {
-      setError("Не удалось начать показ экрана");
     }
-  }, [isDemo, syncParticipants]);
+  }, [isDemo, setMediaBusy, syncParticipants]);
 
   const leave = useCallback(async () => {
     if (!isDemo) {
@@ -519,9 +821,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   return {
     error,
+    isAudioBusy,
     isAudioMuted,
     isDemo,
+    isScreenShareBusy,
     isScreenSharing,
+    isVideoBusy,
     isVideoMuted,
     join,
     leave,

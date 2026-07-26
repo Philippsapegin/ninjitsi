@@ -12,16 +12,11 @@ import {
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
 import { useCallTimer } from "@/hooks/useCallTimer";
-import {
-  createPhantomParticipants,
-  isGridLabRoom,
-} from "@/lib/gridLab";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
 import { readPendingJoin } from "@/lib/room";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
-import { GridLabPanel } from "./GridLabPanel";
 import { JoinOverlay } from "./JoinOverlay";
 import { VideoGrid } from "./VideoGrid";
 import styles from "./MeetingRoom.module.css";
@@ -44,18 +39,6 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const [joinDetailsReady, setJoinDetailsReady] = useState(false);
   const [protectedRoom, setProtectedRoom] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [phantomCount, setPhantomCount] = useState(0);
-  const isGridLab = isGridLabRoom(roomName);
-  const visibleParticipants = useMemo(
-    () =>
-      isGridLab
-        ? [
-            ...conference.participants,
-            ...createPhantomParticipants(phantomCount),
-          ]
-        : conference.participants,
-    [conference.participants, isGridLab, phantomCount],
-  );
   const timer = useCallTimer(conference.status === "joined");
   const showJoinOverlay =
     conference.status === "idle" ||
@@ -80,7 +63,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   }, []);
 
   const participantLabel = useMemo(() => {
-    const count = visibleParticipants.length;
+    const count = conference.participants.length;
     const lastTwoDigits = count % 100;
     const lastDigit = count % 10;
     let noun = "участников";
@@ -94,7 +77,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     }
 
     return `${count} ${noun}`;
-  }, [visibleParticipants.length]);
+  }, [conference.participants.length]);
 
   async function join(details: JoinOptions) {
     setJoinDetails(details);
@@ -168,17 +151,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         </div>
       </header>
 
-      {isGridLab && conference.status === "joined" && (
-        <GridLabPanel
-          onChange={setPhantomCount}
-          phantomCount={phantomCount}
-          realCount={conference.participants.length}
-        />
-      )}
-
       <section className={styles.stage}>
-        {visibleParticipants.length > 0 ? (
-          <VideoGrid participants={visibleParticipants} />
+        {conference.participants.length > 0 ? (
+          <VideoGrid participants={conference.participants} />
         ) : (
           <div className={styles.emptyStage}>
             <Radio size={26} />
@@ -188,8 +163,11 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       </section>
 
       <CallControls
+        isAudioBusy={conference.isAudioBusy}
         isAudioMuted={conference.isAudioMuted}
+        isScreenShareBusy={conference.isScreenShareBusy}
         isScreenSharing={conference.isScreenSharing}
+        isVideoBusy={conference.isVideoBusy}
         isVideoMuted={conference.isVideoMuted}
         onHangup={() => void hangup()}
         onToggleAudio={() => void conference.toggleAudio()}

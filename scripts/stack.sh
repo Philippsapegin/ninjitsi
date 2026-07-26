@@ -110,5 +110,4 @@ fi
 if [ "$action" = "up" ]; then
   printf '\nNinjitsi: http://localhost:3000\n'
   printf 'Jitsi:    https://localhost:8443\n'
-  printf 'Grid Lab: http://localhost:3000/room/grid-lab\n'
 fi

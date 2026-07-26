@@ -10,8 +10,8 @@ export interface JitsiTrackLike {
   getVideoType?: () => "camera" | "desktop" | undefined;
   isLocal?: () => boolean;
   isMuted: () => boolean;
-  mute?: () => Promise<void>;
-  unmute?: () => Promise<void>;
+  mute: () => Promise<void>;
+  unmute: () => Promise<void>;
 }
 
 export interface JitsiParticipantLike {

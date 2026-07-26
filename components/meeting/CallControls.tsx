@@ -1,6 +1,7 @@
 import {
   Camera,
   CameraOff,
+  LoaderCircle,
   Mic,
   MicOff,
   MonitorUp,
@@ -9,8 +10,11 @@ import {
 import styles from "./CallControls.module.css";
 
 interface CallControlsProps {
+  isAudioBusy: boolean;
   isAudioMuted: boolean;
+  isScreenShareBusy: boolean;
   isScreenSharing: boolean;
+  isVideoBusy: boolean;
   isVideoMuted: boolean;
   onHangup: () => void;
   onToggleAudio: () => void;
@@ -20,6 +24,7 @@ interface CallControlsProps {
 
 interface ControlButtonProps {
   active?: boolean;
+  disabled?: boolean;
   danger?: boolean;
   label: string;
   onClick: () => void;
@@ -31,6 +36,7 @@ function ControlButton({
   active = false,
   children,
   danger = false,
+  disabled = false,
   label,
   onClick,
   toggledOff = false,
@@ -42,6 +48,7 @@ function ControlButton({
         danger ? styles.danger : ""
       } ${toggledOff ? styles.off : ""}`}
       onClick={onClick}
+      disabled={disabled}
       title={label}
       type="button"
     >
@@ -52,8 +59,11 @@ function ControlButton({
 }
 
 export function CallControls({
+  isAudioBusy,
   isAudioMuted,
+  isScreenShareBusy,
   isScreenSharing,
+  isVideoBusy,
   isVideoMuted,
   onHangup,
   onToggleAudio,
@@ -64,25 +74,62 @@ export function CallControls({
     <footer className={styles.bar}>
       <div className={styles.dock}>
         <ControlButton
-          label={isAudioMuted ? "Включить микрофон" : "Выключить микрофон"}
+          disabled={isAudioBusy}
+          label={
+            isAudioBusy
+              ? "Подключаем микрофон"
+              : isAudioMuted
+                ? "Включить микрофон"
+                : "Выключить микрофон"
+          }
           onClick={onToggleAudio}
           toggledOff={isAudioMuted}
         >
-          {isAudioMuted ? <MicOff size={20} /> : <Mic size={20} />}
+          {isAudioBusy ? (
+            <LoaderCircle className={styles.spinner} size={20} />
+          ) : isAudioMuted ? (
+            <MicOff size={20} />
+          ) : (
+            <Mic size={20} />
+          )}
         </ControlButton>
         <ControlButton
-          label={isVideoMuted ? "Включить камеру" : "Выключить камеру"}
+          disabled={isVideoBusy}
+          label={
+            isVideoBusy
+              ? "Подключаем камеру"
+              : isVideoMuted
+                ? "Включить камеру"
+                : "Выключить камеру"
+          }
           onClick={onToggleVideo}
           toggledOff={isVideoMuted}
         >
-          {isVideoMuted ? <CameraOff size={20} /> : <Camera size={20} />}
+          {isVideoBusy ? (
+            <LoaderCircle className={styles.spinner} size={20} />
+          ) : isVideoMuted ? (
+            <CameraOff size={20} />
+          ) : (
+            <Camera size={20} />
+          )}
         </ControlButton>
         <ControlButton
           active={isScreenSharing}
-          label={isScreenSharing ? "Остановить показ" : "Показать экран"}
+          disabled={isScreenShareBusy}
+          label={
+            isScreenShareBusy
+              ? "Готовим показ экрана"
+              : isScreenSharing
+                ? "Остановить показ"
+                : "Показать экран"
+          }
           onClick={onToggleScreenShare}
         >
-          <MonitorUp size={20} />
+          {isScreenShareBusy ? (
+            <LoaderCircle className={styles.spinner} size={20} />
+          ) : (
+            <MonitorUp size={20} />
+          )}
         </ControlButton>
         <span className={styles.divider} />
         <ControlButton danger label="Завершить звонок" onClick={onHangup}>

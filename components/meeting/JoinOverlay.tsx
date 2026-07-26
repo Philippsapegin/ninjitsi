@@ -58,7 +58,11 @@ export function JoinOverlay({
   }
 
   return (
-    <div className={styles.overlay}>
+    <div
+      aria-label="Вход в комнату"
+      className={styles.overlay}
+      role="dialog"
+    >
       <div className={styles.ambient} />
       <div className={styles.topBrand}>
         <Brand />

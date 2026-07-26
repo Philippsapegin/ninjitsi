@@ -41,6 +41,16 @@
   transform: translateY(-1px);
 }
 
+.control:disabled {
+  cursor: wait;
+  opacity: 0.72;
+  transform: none;
+}
+
+.spinner {
+  animation: spin 900ms linear infinite;
+}
+
 .control > span {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -94,4 +104,10 @@
   height: 27px;
   margin: 0 3px;
   background: var(--line-strong);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

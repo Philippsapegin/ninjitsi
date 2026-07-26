@@ -139,5 +139,4 @@ if ($Action -eq "up") {
   Write-Host ""
   Write-Host "Ninjitsi: http://localhost:3000"
   Write-Host "Jitsi:    https://localhost:8443"
-  Write-Host "Grid Lab: http://localhost:3000/room/grid-lab"
 }
