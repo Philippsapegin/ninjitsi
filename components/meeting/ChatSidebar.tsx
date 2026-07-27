@@ -124,6 +124,9 @@ export function ChatSidebar({
   const [dragActive, setDragActive] = useState(false);
   const [recipientMenuOpen, setRecipientMenuOpen] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<
+    string | null
+  >(null);
   const [replyTo, setReplyTo] = useState<ChatReplyReference | undefined>();
   const [resetRecipientsAfterSend, setResetRecipientsAfterSend] =
     useState(false);
@@ -138,6 +141,7 @@ export function ChatSidebar({
   const recipientPickerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previousMessageCountRef = useRef(messages.length);
+  const highlightTimerRef = useRef<number | null>(null);
   const remoteParticipants = participants.filter(
     (participant) => !participant.isLocal,
   );
@@ -145,7 +149,8 @@ export function ChatSidebar({
     selectedRecipientIds.includes(participant.id),
   );
   const recipientUnavailable =
-    selectedRecipientIds.length > 0 && selectedRecipients.length === 0;
+    selectedRecipientIds.length > 0 &&
+    selectedRecipients.length !== selectedRecipientIds.length;
 
   useEffect(() => {
     listRef.current?.scrollTo({
@@ -166,6 +171,15 @@ export function ChatSidebar({
       }
     }
   }, [messages, open]);
+
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!recipientMenuOpen) {
@@ -245,8 +259,55 @@ export function ChatSidebar({
       senderName: message.senderName,
       text: (message.text || fallbackText).slice(0, 320),
     });
+    if (message.isPrivate) {
+      const localParticipantId = participants.find(
+        (participant) => participant.isLocal,
+      )?.id;
+      const privateRecipientIds = new Set(message.recipientIds ?? []);
+
+      privateRecipientIds.add(message.senderId);
+      if (localParticipantId) {
+        privateRecipientIds.delete(localParticipantId);
+      }
+      for (const recipientName of message.recipientNames ?? []) {
+        const participant = remoteParticipants.find(
+          (candidate) => candidate.displayName === recipientName,
+        );
+
+        if (participant) {
+          privateRecipientIds.add(participant.id);
+        }
+      }
+      setSelectedRecipientIds([...privateRecipientIds]);
+      setResetRecipientsAfterSend(true);
+    } else {
+      setSelectedRecipientIds([]);
+      setResetRecipientsAfterSend(false);
+    }
+    setRecipientMenuOpen(false);
     setActiveMessageId(null);
     queueMicrotask(() => textareaRef.current?.focus());
+  }
+
+  function goToOriginalMessage(messageId: string) {
+    const target = Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>("[data-chat-message]") ??
+        [],
+    ).find((element) => element.dataset.chatMessage === messageId);
+
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(messageId);
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMessageId(null);
+      highlightTimerRef.current = null;
+    }, 2100);
   }
 
   function sendOnlyTo(message: ChatMessage) {
@@ -338,7 +399,7 @@ export function ChatSidebar({
           </button>
         </header>
 
-        <div className={styles.messages} ref={listRef}>
+        <div className={styles.messages} data-chat-messages ref={listRef}>
           {messages.length === 0 ? (
             <div className={styles.empty}>
               <MessageCircle size={20} />
@@ -358,8 +419,18 @@ export function ChatSidebar({
           ) : (
             messages.map((message) => (
               <article
-                className={message.isLocal ? styles.localMessage : ""}
+                className={[
+                  message.isLocal ? styles.localMessage : "",
+                  highlightedMessageId === message.id
+                    ? styles.messageHighlighted
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 data-chat-message={message.id}
+                data-chat-highlighted={
+                  highlightedMessageId === message.id ? "true" : undefined
+                }
                 key={message.id}
                 onClick={(event) => {
                   if (
@@ -383,7 +454,16 @@ export function ChatSidebar({
                 </div>
                 <div>
                   <header>
-                    <strong>{message.senderName}</strong>
+                    <strong
+                      className={
+                        message.isPrivate ? styles.privateSender : ""
+                      }
+                    >
+                      {message.senderName}
+                      {message.isPrivate && (
+                        <LockKeyhole aria-hidden="true" size={9} />
+                      )}
+                    </strong>
                     <time>
                       {new Date(message.timestamp).toLocaleTimeString(
                         locale === "ru" ? "ru-RU" : "en-US",
@@ -395,21 +475,21 @@ export function ChatSidebar({
                       )}
                     </time>
                   </header>
-                  {message.isPrivate && (
-                    <span className={styles.privateMessage}>
-                      <LockKeyhole size={9} />
-                      {message.isLocal &&
-                      message.recipientNames &&
-                      message.recipientNames.length > 0
-                        ? `${tr("Private", "Лично")}: ${message.recipientNames.join(", ")}`
-                        : tr("Private message", "Личное сообщение")}
-                    </span>
-                  )}
                   {message.replyTo && (
-                    <div className={styles.replyQuote}>
+                    <button
+                      aria-label={tr(
+                        "Go to the original message",
+                        "Перейти к исходному сообщению",
+                      )}
+                      className={styles.replyQuote}
+                      onClick={() =>
+                        goToOriginalMessage(message.replyTo!.messageId)
+                      }
+                      type="button"
+                    >
                       <strong>{message.replyTo.senderName}</strong>
                       <span>{message.replyTo.text}</span>
-                    </div>
+                    </button>
                   )}
                   {message.text && <p>{message.text}</p>}
                   {message.attachments?.map((attachment) => (

@@ -464,6 +464,23 @@ try {
   });
 
   await unreadTab.waitFor({ timeout: 30_000 });
+  const unreadGlowState = await unreadTab.evaluate((button) => {
+    const sidebar = button.closest("aside");
+
+    return {
+      boxShadow: getComputedStyle(button).boxShadow,
+      sidebarOverflow: sidebar ? getComputedStyle(sidebar).overflow : null,
+    };
+  });
+
+  if (
+    unreadGlowState.sidebarOverflow !== "visible" ||
+    unreadGlowState.boxShadow === "none"
+  ) {
+    throw new Error(
+      `Свечение непрочитанного чата обрезается: ${JSON.stringify(unreadGlowState)}`,
+    );
+  }
   await waitForSound(page, "Nin.Message.wav");
   await unreadTab.click();
   await page
@@ -485,11 +502,35 @@ try {
   await observerPage
     .getByText(privateProbe, { exact: true })
     .waitFor({ timeout: 30_000 });
-  await page
+  const originalPrivateArticle = page
     .locator("article")
     .filter({ hasText: privateProbe })
-    .getByText("Лично: Remote Observer", { exact: true })
-    .waitFor();
+    .first();
+  const privateAppearance = await originalPrivateArticle.evaluate(
+    (article) => {
+      const sender = article.querySelector("header strong");
+
+      return {
+        hasLock: Boolean(sender?.querySelector("svg")),
+        hasPrivateLabel: Array.from(article.querySelectorAll("span")).some(
+          (element) =>
+            element.textContent?.trim() === "Личное сообщение" ||
+            element.textContent?.trim().startsWith("Лично:"),
+        ),
+        senderColor: sender ? getComputedStyle(sender).color : null,
+      };
+    },
+  );
+
+  if (
+    !privateAppearance.hasLock ||
+    privateAppearance.hasPrivateLabel ||
+    privateAppearance.senderColor !== "rgb(216, 255, 99)"
+  ) {
+    throw new Error(
+      `Приватное сообщение оформлено неверно: ${JSON.stringify(privateAppearance)}`,
+    );
+  }
   await bystanderPage.waitForTimeout(1_500);
   if (
     (await bystanderPage.getByText(privateProbe, { exact: true }).count()) !==
@@ -497,6 +538,59 @@ try {
   ) {
     throw new Error("Личное сообщение увидел невыбранный участник");
   }
+  const privateReplyProbe = `Приватный ответ ${Date.now()}`;
+  const observerPrivateArticle = observerPage
+    .locator("article")
+    .filter({ hasText: privateProbe })
+    .first();
+
+  await observerPrivateArticle.click();
+  await observerPrivateArticle
+    .getByRole("group", { name: "Действия с сообщением" })
+    .getByRole("button", { name: "Ответить" })
+    .click();
+  await observerPage
+    .getByLabel("Выбрать получателей сообщения")
+    .getByText("Лично: Ninjitsi Smoke", { exact: true })
+    .waitFor();
+  await observerPage
+    .getByLabel("Сообщение в чат")
+    .fill(privateReplyProbe);
+  await observerPage
+    .getByRole("button", { name: "Отправить сообщение" })
+    .click();
+  const receivedPrivateReply = page
+    .locator("article")
+    .filter({ hasText: privateReplyProbe });
+
+  await receivedPrivateReply.waitFor({ timeout: 30_000 });
+  await observerPage
+    .getByLabel("Выбрать получателей сообщения")
+    .getByText("Всем", { exact: true })
+    .waitFor();
+  await bystanderPage.waitForTimeout(1_500);
+  if (
+    (await bystanderPage
+      .getByText(privateReplyProbe, { exact: true })
+      .count()) !== 0
+  ) {
+    throw new Error("Приватный reply увидел участник вне исходного круга");
+  }
+  const originalPrivateMessageId =
+    await originalPrivateArticle.getAttribute("data-chat-message");
+
+  await receivedPrivateReply
+    .getByRole("button", { name: "Перейти к исходному сообщению" })
+    .click();
+  await page.waitForFunction(
+    (messageId) =>
+      Array.from(document.querySelectorAll("[data-chat-message]")).some(
+        (element) =>
+          element.getAttribute("data-chat-message") === messageId &&
+          element.getAttribute("data-chat-highlighted") === "true",
+      ),
+    originalPrivateMessageId,
+  );
   await page.getByLabel("Выбрать получателей сообщения").click();
   await page
     .getByRole("region", { name: "Получатели сообщения" })
@@ -872,6 +966,8 @@ try {
           chat: "bidirectional transport and reply quoting passed",
           chatUnread: "collapsed glow and message sound passed",
           privateChat: "selected recipients only passed",
+          privateReply:
+            "original recipient set, quote navigation and reset passed",
           messageOnlyTo:
             "clicked sender only and recipient reset passed",
           connectionStats: "conference RTT passed",

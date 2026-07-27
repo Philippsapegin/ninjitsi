@@ -121,6 +121,7 @@ interface IncomingAttachment {
   isPrivate: boolean;
   mimeType: string;
   name: string;
+  recipientIds: string[];
   recipientNames: string[];
   senderId: string;
   senderName: string;
@@ -143,12 +144,14 @@ type PingWireMessage =
 
 interface PrivateChatWireMessage {
   message: string;
+  recipientIds: string[];
   recipientNames: string[];
   timestamp: number;
   type: typeof PRIVATE_CHAT_MESSAGE_TYPE;
 }
 
 interface ChatTextWireMessage {
+  id?: string;
   replyTo?: ChatReplyReference;
   text: string;
 }
@@ -198,13 +201,11 @@ function normalizeReplyReference(
 
 function chatTextMessage(
   text: string,
+  id: string,
   replyTo?: ChatReplyReference,
 ) {
-  if (!replyTo) {
-    return text;
-  }
-
   return `${CHAT_TEXT_MESSAGE_PREFIX}${JSON.stringify({
+    id,
     replyTo: normalizeReplyReference(replyTo),
     text,
   } satisfies ChatTextWireMessage)}`;
@@ -230,6 +231,10 @@ function parseChatTextMessage(text: string): ChatTextWireMessage {
     }
 
     return {
+      id:
+        "id" in parsed && typeof parsed.id === "string"
+          ? parsed.id.slice(0, 180)
+          : undefined,
       replyTo:
         "replyTo" in parsed
           ? normalizeReplyReference(parsed.replyTo)
@@ -277,6 +282,12 @@ function parsePrivateChatWireMessage(
 
   return {
     message: payload.message,
+    recipientIds:
+      "recipientIds" in payload && Array.isArray(payload.recipientIds)
+        ? payload.recipientIds
+            .filter((id): id is string => typeof id === "string")
+            .slice(0, 30)
+        : [],
     recipientNames: payload.recipientNames
       .filter((name): name is string => typeof name === "string")
       .slice(0, 30),
@@ -298,6 +309,7 @@ function deliverChatWireMessage(
 
   const payload: PrivateChatWireMessage = {
     message,
+    recipientIds: recipients.map((recipient) => recipient.id),
     recipientNames: recipients.map((recipient) => recipient.name),
     timestamp,
     type: PRIVATE_CHAT_MESSAGE_TYPE,
@@ -1001,6 +1013,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
               rawText: string,
               rawTimestamp: unknown,
               isPrivate = false,
+              recipientIds: string[] = [],
               recipientNames: string[] = [],
             ) => {
               if (rawSenderId === localIdRef.current) {
@@ -1105,6 +1118,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     name:
                       wireMessage.name.slice(0, 180) ||
                       ui("Attachment", "Вложение"),
+                    recipientIds,
                     recipientNames,
                     senderId: rawSenderId,
                     senderName:
@@ -1154,9 +1168,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     {
                       attachments: [attachment],
                       avatarUrl: transfer.avatarUrl,
-                      id: `${rawSenderId}-${transfer.id}`,
+                      id: `attachment-${transfer.id}`,
                       isLocal: false,
                       isPrivate: transfer.isPrivate,
+                      recipientIds: transfer.recipientIds,
                       recipientNames: transfer.recipientNames,
                       senderId: rawSenderId,
                       senderName: transfer.senderName,
@@ -1178,9 +1193,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     typeof sender?.getProperty?.("avatarURL") === "string"
                       ? String(sender.getProperty?.("avatarURL"))
                       : "",
-                  id: `${rawSenderId}-${timestamp}-${messages.length}`,
+                  id:
+                    chatText.id ??
+                    `${rawSenderId}-${timestamp}-${messages.length}`,
                   isLocal: false,
                   isPrivate,
+                  recipientIds,
                   recipientNames,
                   replyTo: chatText.replyTo,
                   senderId: rawSenderId,
@@ -1233,6 +1251,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
                     privateMessage.message,
                     privateMessage.timestamp,
                     true,
+                    privateMessage.recipientIds,
                     privateMessage.recipientNames,
                   );
                 },
@@ -1991,11 +2010,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
       }
 
       const timestamp = Date.now();
+      const messageId =
+        globalThis.crypto?.randomUUID?.() ??
+        `chat-${timestamp}-${Math.random().toString(36).slice(2)}`;
 
       if (!isDemo && conference) {
         deliverChatWireMessage(
           conference,
-          chatTextMessage(text, replyTo),
+          chatTextMessage(text, messageId, replyTo),
           recipients,
           timestamp,
         );
@@ -2004,9 +2026,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
         ...messages,
         {
           avatarUrl: localAvatarRef.current,
-          id: `local-${timestamp}-${messages.length}`,
+          id: messageId,
           isLocal: true,
           isPrivate,
+          recipientIds: recipients.map((recipient) => recipient.id),
           recipientNames: recipients.map((recipient) => recipient.name),
           replyTo: normalizeReplyReference(replyTo),
           senderId: localIdRef.current,
@@ -2099,9 +2122,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
           {
             attachments: [attachment],
             avatarUrl: localAvatarRef.current,
-            id: `local-${attachmentId}`,
+            id: `attachment-${attachmentId}`,
             isLocal: true,
             isPrivate,
+            recipientIds: recipients.map((recipient) => recipient.id),
             recipientNames: recipients.map((recipient) => recipient.name),
             senderId: localIdRef.current,
             senderName: localNameRef.current,

@@ -285,7 +285,7 @@ Profiles and avatars stay only in that browser's local storage. Chat messages an
 - **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a large stage while the other participants form a row below.
 - **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API when the browser and Jitsi build support AudioWorklet.
 - **Private messages:** text or attachments can be addressed to one or more selected participants through Jitsi endpoint messages.
-- **Replies and meeting alerts:** click a message to reply with a quote or send only to its author; collapsed-chat messages glow and play an alert, while participant joins and departures have separate room sounds.
+- **Replies and meeting alerts:** click a message to reply with a quote or send only to its author; private replies keep the original recipient set, and clicking a quote jumps to and highlights its source. Collapsed-chat messages glow and play an alert, while participant joins and departures have separate room sounds.
 - **Personal volume:** each remote participant can be adjusted locally from 0% to 200%; the setting changes only what the current client hears. Local microphone audio is never attached to the client's own output.
 - **Chat attachments:** drag-and-drop and file-picker delivery up to 2 MB per file; images open in an in-app preview and transparent PNGs retain their alpha channel. Attachments disappear with the conference.
 - **Bilingual interface:** English is the default; Russian and English can be switched on the home page or during a meeting.

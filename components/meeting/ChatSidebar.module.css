@@ -13,6 +13,7 @@
 .root.closed {
   width: 42px;
   min-width: 42px;
+  overflow: visible;
 }
 
 .panel {
@@ -133,6 +134,25 @@
   flex-direction: column;
   gap: 16px;
   overflow: auto;
+  scrollbar-color: rgba(216, 255, 99, 0.34) transparent;
+  scrollbar-width: thin;
+}
+
+.messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.messages::-webkit-scrollbar-thumb {
+  background: rgba(216, 255, 99, 0.28);
+  border-radius: 999px;
+}
+
+.messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(216, 255, 99, 0.52);
 }
 
 .empty {
@@ -167,6 +187,33 @@
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 9px;
   cursor: pointer;
+}
+
+.messages > article::before {
+  position: absolute;
+  z-index: 0;
+  inset: -7px;
+  pointer-events: none;
+  content: "";
+  background: transparent;
+  border-radius: 10px;
+}
+
+.messages > article.messageHighlighted::before {
+  animation: message-highlight 2.1s ease-out;
+}
+
+@keyframes message-highlight {
+  0%,
+  35% {
+    background: rgba(216, 255, 99, 0.18);
+    box-shadow: 0 0 22px rgba(216, 255, 99, 0.13);
+  }
+
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
 }
 
 .messageAvatar {
@@ -208,6 +255,17 @@
   white-space: nowrap;
 }
 
+.messages article header strong.privateSender {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+}
+
+.privateSender svg {
+  flex: 0 0 auto;
+}
+
 .messages article time {
   flex: 0 0 auto;
   color: var(--text-faint);
@@ -229,13 +287,22 @@
 
 .replyQuote {
   display: flex;
+  width: 100%;
   margin: 0 0 6px;
   padding: 6px 7px;
   flex-direction: column;
   gap: 2px;
   overflow: hidden;
+  color: inherit;
   background: rgba(216, 255, 99, 0.055);
+  border: 0;
   border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.replyQuote:hover {
+  background: rgba(216, 255, 99, 0.1);
 }
 
 .replyQuote strong {
@@ -282,16 +349,6 @@
 .messageActions button:hover {
   color: var(--accent);
   background: rgba(216, 255, 99, 0.06);
-}
-
-.privateMessage {
-  display: inline-flex;
-  margin: 0 0 5px;
-  align-items: center;
-  gap: 4px;
-  color: var(--accent);
-  font-size: 8px;
-  font-weight: 680;
 }
 
 .attachment {

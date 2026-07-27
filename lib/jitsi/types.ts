@@ -121,6 +121,7 @@ export interface ChatMessage {
   id: string;
   isPrivate?: boolean;
   isLocal: boolean;
+  recipientIds?: string[];
   recipientNames?: string[];
   replyTo?: ChatReplyReference;
   senderId: string;

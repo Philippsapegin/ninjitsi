@@ -514,17 +514,52 @@ try {
   await page
     .getByRole("button", { name: "Отправить сообщение" })
     .click();
-  await page
-    .locator("article")
-    .filter({ hasText: "Личное демо" })
-    .getByText("Лично: Laura K.", { exact: true })
-    .waitFor();
-  await page.getByText("Visual Tester", { exact: true }).last().waitFor();
-  await page.screenshot({ path: chatScreenshotPath });
-
   const privateMessageArticle = page
     .locator("article")
     .filter({ hasText: "Личное демо" });
+  const originalMessageId =
+    await privateMessageArticle.getAttribute("data-chat-message");
+  const privateMessageAppearance = await privateMessageArticle.evaluate(
+    (article) => {
+      const sender = article.querySelector("header strong");
+
+      return {
+        hasLock: Boolean(sender?.querySelector("svg")),
+        privateLabelVisible: Array.from(article.querySelectorAll("span")).some(
+          (element) =>
+            element.textContent?.trim() === "Личное сообщение" ||
+            element.textContent?.trim().startsWith("Лично:"),
+        ),
+        senderColor: sender ? getComputedStyle(sender).color : null,
+      };
+    },
+  );
+
+  if (
+    !privateMessageAppearance.hasLock ||
+    privateMessageAppearance.privateLabelVisible ||
+    privateMessageAppearance.senderColor !== "rgb(216, 255, 99)"
+  ) {
+    throw new Error(
+      `Private message appearance is invalid: ${JSON.stringify(privateMessageAppearance)}`,
+    );
+  }
+  await page.getByText("Visual Tester", { exact: true }).last().waitFor();
+  await page.screenshot({ path: chatScreenshotPath });
+
+  await page.getByLabel("Выбрать получателей сообщения").click();
+  await page
+    .getByRole("region", { name: "Получатели сообщения" })
+    .getByRole("button", { name: /Всем участникам/ })
+    .click();
+  for (let index = 0; index < 18; index += 1) {
+    await page
+      .getByLabel("Сообщение в чат")
+      .fill(`Проверка прокрутки ${index + 1}`);
+    await page
+      .getByRole("button", { name: "Отправить сообщение" })
+      .click();
+  }
 
   await privateMessageArticle.click();
   await page
@@ -532,13 +567,67 @@ try {
     .getByRole("button", { name: "Ответить" })
     .click();
   await page.getByText("Ответ для Visual Tester", { exact: true }).waitFor();
+  await page
+    .getByLabel("Выбрать получателей сообщения")
+    .getByText("Лично: Laura K.", { exact: true })
+    .waitFor();
   await page.getByLabel("Сообщение в чат").fill("Ответ с цитатой");
   await page.getByRole("button", { name: "Отправить сообщение" }).click();
-  await page
+  const replyArticle = page
     .locator("article")
-    .filter({ hasText: "Ответ с цитатой" })
+    .filter({ hasText: "Ответ с цитатой" });
+
+  await replyArticle
     .getByText("Личное демо", { exact: true })
     .waitFor();
+  await page
+    .getByLabel("Выбрать получателей сообщения")
+    .getByText("Всем", { exact: true })
+    .waitFor();
+  const messagesViewport = page.locator("[data-chat-messages]");
+  await messagesViewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.waitForTimeout(100);
+  const scrollBeforeQuote = await messagesViewport.evaluate(
+    (element) => element.scrollTop,
+  );
+
+  await replyArticle
+    .getByRole("button", { name: "Перейти к исходному сообщению" })
+    .click();
+  await page.waitForFunction(
+    (messageId) =>
+      Array.from(document.querySelectorAll("[data-chat-message]")).some(
+        (element) =>
+          element.getAttribute("data-chat-message") === messageId &&
+          element.getAttribute("data-chat-highlighted") === "true",
+      ),
+    originalMessageId,
+  );
+  await page.waitForTimeout(350);
+  const scrollAfterQuote = await messagesViewport.evaluate(
+    (element) => element.scrollTop,
+  );
+
+  if (scrollAfterQuote >= scrollBeforeQuote - 20) {
+    throw new Error(
+      `Reply quote did not scroll to the original: before=${scrollBeforeQuote}, after=${scrollAfterQuote}`,
+    );
+  }
+  const scrollbarState = await messagesViewport.evaluate((element) => ({
+    color: getComputedStyle(element).scrollbarColor,
+    width: getComputedStyle(element).scrollbarWidth,
+  }));
+
+  if (
+    scrollbarState.width !== "thin" ||
+    scrollbarState.color === "auto"
+  ) {
+    throw new Error(
+      `The custom chat scrollbar is missing: ${JSON.stringify(scrollbarState)}`,
+    );
+  }
 
   const transparentPngDataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
