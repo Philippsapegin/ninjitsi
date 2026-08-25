@@ -1,43 +1,52 @@
 # Ninjitsi
 
-Ninjitsi is a desktop-first web client for a self-hosted Jitsi deployment: it keeps every participant in a responsive 16:9 grid, removes the standard Jitsi interface, and adds a small room server, local profiles, chat, stage mode, device controls, and per-participant audio controls. Guests only need a current desktop browser and a room link; no Ninjitsi or Jitsi software is installed on their computers.
+Ninjitsi is a desktop-first web client for a self-hosted Jitsi deployment. It replaces the standard meeting interface with a responsive 16:9 grid, stage mode, local profiles, chat, device controls, and per-participant audio controls. Guests open a room link in a current desktop browser; they do not install Ninjitsi or Jitsi.
 
 ## Requirements
 
-For a public production installation:
+For a small public installation:
 
-- a 64-bit Linux server; Ubuntu 24.04 LTS is the documented example;
-- at least 2 CPU cores, 4 GB RAM, and 20 GB free disk for a small meeting server;
+- Ubuntu 24.04 LTS or another 64-bit Linux distribution supported by Docker;
+- at least 2 CPU cores, 4 GB RAM, and 20 GB free disk;
 - root or `sudo` access;
-- Docker Engine with the Docker Compose v2 plugin;
-- Git, `curl`, `unzip`, and OpenSSL;
-- two DNS names pointing to the server, for example `call.example.com` for Ninjitsi and `jitsi.example.com` for Jitsi;
-- inbound `80/tcp`, `443/tcp`, and `10000/udp` allowed both in the host firewall and the hosting provider's security group;
-- a current desktop Chrome or Edge on client computers.
+- Docker Engine with Docker Compose v2, Git, curl, unzip, and OpenSSL;
+- two DNS names pointing to the server, for example `call.example.com` and `jitsi.example.com`;
+- inbound `80/tcp`, `443/tcp`, and `10000/udp` in both the host firewall and hosting-provider firewall;
+- a current desktop Chrome or Edge for clients.
 
-`10000/udp` is the Jitsi Videobridge media path and is required even when HTTP is behind a reverse proxy. If users must connect from networks that block UDP, configure a TURN server over TCP/TLS before calling the deployment production-ready. The reference Jitsi Docker installation supports `amd64` and `arm64`.
+Port `10000/udp` is the Jitsi Videobridge media path. A reverse proxy does not replace it. Add a TURN server over TCP/TLS if clients must work from networks that block UDP.
+
+The production layout is:
+
+```text
+Internet -> Caddy :443 -> Ninjitsi 127.0.0.1:3000
+                       -> Jitsi    127.0.0.1:8000
+Internet -> JVB :10000/udp
+```
+
+Ninjitsi and Jitsi share one JWT secret. Ninjitsi issues a short-lived, room-scoped token only after its room API admits the user. Jitsi rejects tokenless connections, so opening the Jitsi domain directly does not bypass a Ninjitsi room password.
 
 ## Server installation and launch
 
-The commands below install Ninjitsi and Jitsi on one Ubuntu server. Replace these example values everywhere:
+Replace these examples throughout the instructions:
 
 ```text
-call.example.com      public Ninjitsi address
-jitsi.example.com    public Jitsi address
-203.0.113.10         server public IPv4 address
-admin@example.com    certificate notification email
+call.example.com     public Ninjitsi domain
+jitsi.example.com   public Jitsi domain
+203.0.113.10        public IPv4 address of the server
+admin@example.com   certificate notification email
 ```
 
-### 1. Prepare DNS and network access
+### 1. Prepare DNS and firewall
 
-Create `A` records for both names with the public IPv4 address of the server. Create matching `AAAA` records only when IPv6 is actually routed to the host and Docker is configured for it. Wait until both names resolve correctly:
+Create `A` records for both domains. Create `AAAA` records only when IPv6 is routed to the server and Docker is configured for it.
 
 ```bash
 getent ahostsv4 call.example.com
 getent ahostsv4 jitsi.example.com
 ```
 
-Open the required ports in the cloud firewall/security group. If UFW is in use:
+Open the public ports. Keep SSH limited to trusted addresses when possible.
 
 ```bash
 sudo ufw allow 22/tcp
@@ -48,11 +57,9 @@ sudo ufw enable
 sudo ufw status
 ```
 
-Docker-published ports can bypass some UFW rules. The configuration below therefore binds the private HTTP backends to `127.0.0.1`; only Caddy and Jitsi media are public.
+The application HTTP ports are bound to `127.0.0.1`, so only Caddy can reach them publicly.
 
-### 2. Install Docker Engine and tools
-
-Install Docker from Docker's official Ubuntu repository:
+### 2. Install Docker and tools
 
 ```bash
 sudo apt update
@@ -79,45 +86,62 @@ sudo docker run --rm hello-world
 sudo docker compose version
 ```
 
-The remaining examples use `sudo docker`. Adding an account to the `docker` group grants it root-equivalent access and is optional.
+The remaining examples use `sudo docker`. Membership in the `docker` group is root-equivalent and is not required.
 
-### 3. Download Ninjitsi
+### 3. Download Ninjitsi and Jitsi
+
+Ninjitsi is tested against the official `docker-jitsi-meet stable-11146-2` release.
 
 ```bash
 sudo mkdir -p /opt/ninjitsi
 sudo chown "$USER":"$USER" /opt/ninjitsi
 cd /opt/ninjitsi
 git clone https://github.com/Philippsapegin/ninjitsi.git
-```
 
-### 4. Install the matching Jitsi release
-
-Ninjitsi's local stack is tested against `docker-jitsi-meet stable-11031`. Download the release archive rather than the development branch:
-
-```bash
-cd /opt/ninjitsi
 curl -fL \
-  https://github.com/jitsi/docker-jitsi-meet/archive/refs/tags/stable-11031.zip \
+  https://github.com/jitsi/docker-jitsi-meet/archive/refs/tags/stable-11146-2.zip \
   -o docker-jitsi-meet.zip
 unzip docker-jitsi-meet.zip
-mv docker-jitsi-meet-stable-11031 jitsi
+mv docker-jitsi-meet-stable-11146-2 jitsi
 rm docker-jitsi-meet.zip
+```
 
+Do not deploy Jitsi from its development branch. The release archive and container image version must match.
+
+### 4. Configure JWT-protected Jitsi
+
+Generate one shared admission secret and protect it from other host users:
+
+```bash
+umask 077
+openssl rand -hex 32 > /opt/ninjitsi/jitsi-jwt-secret
+```
+
+Prepare Jitsi's internal service passwords and rootless directory layout:
+
+```bash
 cd /opt/ninjitsi/jitsi
 cp env.example .env
 ./gen-passwords.sh
-mkdir -p /opt/ninjitsi/jitsi-config/{web,transcripts,prosody/config,prosody/prosody-plugins-custom,jicofo,jvb,jigasi,jibri}
+
+mkdir -p /opt/ninjitsi/jitsi-config/{web,prosody/config,prosody/prosody-plugins-custom,jicofo,jvb,jigasi,jibri,transcriber}
+mkdir -p /opt/ninjitsi/jitsi-config/storage/{jibri,prosody,transcripts,web}
+mkdir -p /opt/ninjitsi/jitsi-config/tmp/{web-crontabs,web-load-test}
+chmod 0777 /opt/ninjitsi/jitsi-config/storage/{jibri,prosody,transcripts,web}
+chmod 0777 /opt/ninjitsi/jitsi-config/tmp/{web-crontabs,web-load-test}
 ```
 
-Append the production settings. Use the server's public IP for `JVB_ADVERTISE_IPS`, not a Docker, LAN, or reverse-proxy address:
+Append the production settings. `JVB_ADVERTISE_IPS` must be the public server address, not a Docker or LAN address.
 
 ```bash
-cat >> .env <<'EOF'
+JITSI_JWT_SECRET=$(tr -d '\r\n' < /opt/ninjitsi/jitsi-jwt-secret)
+
+cat >> .env <<EOF
 
 # Ninjitsi production settings
 CONFIG=/opt/ninjitsi/jitsi-config
-HTTP_PORT=8000
-HTTPS_PORT=8443
+HTTP_PORT=127.0.0.1:8000
+HTTPS_PORT=127.0.0.1:8443
 TZ=UTC
 PUBLIC_URL=https://jitsi.example.com
 JVB_ADVERTISE_IPS=203.0.113.10
@@ -126,53 +150,81 @@ ENABLE_HTTP_REDIRECT=0
 ENABLE_LETSENCRYPT=0
 ENABLE_PREJOIN_PAGE=0
 ENABLE_WELCOME_PAGE=0
+
+# Only Ninjitsi-issued room tokens may join.
+ENABLE_AUTH=1
+ENABLE_GUESTS=0
+AUTH_TYPE=jwt
+JWT_APP_ID=ninjitsi
+JWT_APP_SECRET=${JITSI_JWT_SECRET}
+JWT_ACCEPTED_ISSUERS=ninjitsi
+JWT_ACCEPTED_AUDIENCES=ninjitsi
+JWT_ALLOW_EMPTY=0
+JWT_AUTH_TYPE=token
+JWT_TOKEN_AUTH_MODULE=token_verification
+PROSODY_ENABLE_RATE_LIMITS=1
 EOF
+
+cp /opt/ninjitsi/ninjitsi/deploy/jitsi-compose.override.yml \
+  /opt/ninjitsi/jitsi/docker-compose.override.yml
 ```
 
-Caddy will terminate HTTPS, so Jitsi stays on private HTTP. Restrict both Jitsi web mappings to loopback:
+The override bounds Docker log growth. Validate the effective configuration before starting anything:
 
 ```bash
-sed -i \
-  -e "s/'\${HTTP_PORT}:80'/'127.0.0.1:\${HTTP_PORT}:80'/" \
-  -e "s/'\${HTTPS_PORT}:443'/'127.0.0.1:\${HTTPS_PORT}:443'/" \
-  docker-compose.yml
-```
-
-Review the effective values and start Jitsi:
-
-```bash
-sudo docker compose config | grep -E \
-  'PUBLIC_URL|JVB_ADVERTISE_IPS|published|host_ip'
+sudo docker compose config --quiet
 sudo docker compose up -d
 sudo docker compose ps
-```
-
-All four core services—`web`, `prosody`, `jicofo`, and `jvb`—must be running. Do not continue if one repeatedly restarts:
-
-```bash
 sudo docker compose logs --tail=100 web prosody jicofo jvb
 ```
 
-### 5. Build and start Ninjitsi
+All four services must remain healthy/running. The current Jitsi release runs them as unprivileged users with read-only container filesystems; missing or unwritable `storage` and `tmp` directories cause an intentional startup failure.
+
+### 5. Configure and start Ninjitsi
+
+Use the same JWT secret:
 
 ```bash
 cd /opt/ninjitsi/ninjitsi
-cat > .env <<'EOF'
+JITSI_JWT_SECRET=$(tr -d '\r\n' < /opt/ninjitsi/jitsi-jwt-secret)
+
+cat > .env <<EOF
 JITSI_URL=https://jitsi.example.com
 NINJITSI_PORT=127.0.0.1:3000
-MAX_ROOMS=10000
-EOF
 
+JITSI_AUTH_MODE=token
+JITSI_JWT_APP_ID=ninjitsi
+JITSI_JWT_AUDIENCE=ninjitsi
+JITSI_JWT_SUBJECT=meet.jitsi
+JITSI_JWT_SECRET=${JITSI_JWT_SECRET}
+JITSI_JWT_TTL_SECONDS=43200
+
+MAX_ROOMS=10000
+ROOM_TTL_HOURS=720
+ROOM_CREATE_RATE_LIMIT=10
+ROOM_CREATE_RATE_WINDOW_SECONDS=600
+ROOM_CREATE_GLOBAL_RATE_LIMIT=120
+ROOM_JOIN_RATE_LIMIT=30
+ROOM_JOIN_GLOBAL_RATE_LIMIT=600
+ROOM_PASSWORD_RATE_LIMIT=10
+ROOM_LOOKUP_RATE_LIMIT=120
+SCRYPT_MAX_CONCURRENCY=2
+SCRYPT_MAX_QUEUE=8
+TRUST_PROXY=1
+EOF
+chmod 0600 .env
+
+sudo docker compose config --quiet
 sudo docker compose up -d --build
 sudo docker compose ps
 curl --fail http://127.0.0.1:3000/api/health
 ```
 
-The `ninjitsi-data` Docker volume contains the room registry and survives container replacement. Room passwords are stored as salted scrypt hashes, never as plaintext.
+The health response must contain `"ok":true` and `"authMode":"token"`. A one-shot, networkless `data-init` container fixes ownership of registries created by pre-rootless releases and exits. The long-running Ninjitsi container runs as uid 1000, drops all capabilities, has a read-only root filesystem, and writes only the room registry volume.
+
+New room codes contain a 96-bit random hexadecimal suffix. Rooms expire after `ROOM_TTL_HOURS` and are pruned automatically. Reaching `MAX_ROOMS` returns an error; active records are never evicted to make room for an attacker.
 
 ### 6. Add public HTTPS with Caddy
-
-Install the official Caddy package:
 
 ```bash
 sudo apt install -y debian-keyring debian-archive-keyring \
@@ -185,25 +237,13 @@ sudo chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 sudo chmod o+r /etc/apt/sources.list.d/caddy-stable.list
 sudo apt update
 sudo apt install -y caddy
+
+sudo install -m 0644 /opt/ninjitsi/ninjitsi/deploy/Caddyfile.example \
+  /etc/caddy/Caddyfile
+sudoedit /etc/caddy/Caddyfile
 ```
 
-Create `/etc/caddy/Caddyfile`:
-
-```caddyfile
-{
-    email admin@example.com
-}
-
-call.example.com {
-    reverse_proxy 127.0.0.1:3000
-}
-
-jitsi.example.com {
-    reverse_proxy 127.0.0.1:8000
-}
-```
-
-Caddy forwards the Jitsi XMPP and Colibri WebSockets automatically. Validate and reload:
+Replace both example domains and the email. Then validate and reload:
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
@@ -211,97 +251,158 @@ sudo systemctl reload caddy
 sudo systemctl status caddy --no-pager
 ```
 
-Caddy obtains trusted TLS certificates after DNS and ports 80/443 are working. Verify the public endpoints:
+Caddy obtains trusted certificates and proxies Jitsi's XMPP and Colibri WebSockets. `stream_close_delay` prevents a Caddy configuration reload from immediately terminating every long-lived WebSocket.
+
+### 7. Production verification
 
 ```bash
 curl --fail https://call.example.com/api/health
 curl --fail --head https://jitsi.example.com/config.js
-curl --fail --head \
-  https://jitsi.example.com/libs/lib-jitsi-meet.min.js
-sudo ss -lunp | grep ':10000'
+curl --fail --head https://jitsi.example.com/libs/lib-jitsi-meet.min.js
+curl --silent --head https://call.example.com | \
+  grep -Ei 'strict-transport-security|content-security-policy|permissions-policy|x-content-type-options'
+sudo ss -lntup | grep -E ':(80|443|10000)\b'
+sudo docker compose -f /opt/ninjitsi/ninjitsi/compose.yaml \
+  --env-file /opt/ninjitsi/ninjitsi/.env exec -T web id
 ```
 
-Open `https://call.example.com`, create a room, and join its link from a second computer on a different network. Camera/microphone access and screen sharing require trusted HTTPS. If two-person calls work but larger meetings lose media, check `JVB_ADVERTISE_IPS`, the `10000/udp` rule, NAT forwarding, and `sudo docker compose logs jvb`.
+Only Caddy should listen publicly on TCP 80/443; the Ninjitsi and Jitsi HTTP backends should show `127.0.0.1`. JVB must listen on UDP 10000.
 
-### 7. Operations and updates
+Create a password-protected room at `https://call.example.com`. Verify all of the following before inviting users:
 
-View logs:
+1. the room URL works from a second computer on another network;
+2. an incorrect password is rejected by Ninjitsi;
+3. entering the same room directly through the Jitsi UI without a JWT is rejected;
+4. both sides receive audio/video, screen sharing, chat, and attachments;
+5. reconnecting Wi-Fi restores the meeting;
+6. a forced JVB call remains connected for the required six-hour acceptance period.
+
+Camera, microphone, and screen sharing require trusted HTTPS. If two-person calls work but JVB calls fail, inspect `JVB_ADVERTISE_IPS`, UDP 10000, NAT forwarding, and JVB logs. TURN is required for clients whose networks block UDP.
+
+## Operations
+
+### Logs and health
 
 ```bash
 cd /opt/ninjitsi/ninjitsi
+sudo docker compose ps
 sudo docker compose logs -f --tail=100
 
 cd /opt/ninjitsi/jitsi
+sudo docker compose ps
 sudo docker compose logs -f --tail=100 web prosody jicofo jvb
 ```
 
-Restart without deleting persistent data:
+Monitor `https://call.example.com/api/health`, Docker container health, disk usage, RAM, and UDP/JVB reachability from an external monitoring system. Application health alone cannot prove that media traversal works.
+
+### Backup and restore
+
+The room registry is stored in the `ninjitsi_ninjitsi-data` volume. Chat and attachments are conference-only and are not backed up.
 
 ```bash
-cd /opt/ninjitsi/jitsi && sudo docker compose restart
-cd /opt/ninjitsi/ninjitsi && sudo docker compose restart
+sudo install -d -m 0700 /var/backups/ninjitsi
+sudo docker run --rm \
+  -v ninjitsi_ninjitsi-data:/data:ro \
+  -v /var/backups/ninjitsi:/backup \
+  alpine tar -C /data -czf /backup/ninjitsi-data-$(date +%F-%H%M%S).tgz .
+
+sudo tar -C /opt/ninjitsi -czf \
+  /var/backups/ninjitsi/ninjitsi-config-$(date +%F-%H%M%S).tgz \
+  jitsi/.env jitsi-config jitsi-jwt-secret ninjitsi/.env
+sudo find /var/backups/ninjitsi -maxdepth 1 -type f \
+  -name 'ninjitsi-*.tgz' -exec chmod 0600 {} +
 ```
 
-Update Ninjitsi:
+The second archive contains service passwords and the shared JWT secret. Encrypt it before copying it off the meeting server. Automate both commands with a systemd timer or backup service and test restoration periodically. To restore a selected room-registry archive:
 
 ```bash
 cd /opt/ninjitsi/ninjitsi
+sudo docker compose stop web
+sudo docker run --rm \
+  -v ninjitsi_ninjitsi-data:/data \
+  -v /var/backups/ninjitsi:/backup:ro \
+  alpine tar -C /data -xzf /backup/ninjitsi-data-YYYY-MM-DD-HHMMSS.tgz
+sudo docker compose run --rm data-init
+sudo docker compose start web
+curl --fail http://127.0.0.1:3000/api/health
+```
+
+Restoration overwrites `rooms.json` with the archived registry. Keep the current file as a backup before restoring older data. The configuration archive is for disaster recovery: install the same pinned Jitsi release, stop both stacks, restore its paths under `/opt/ninjitsi`, and only then start the services.
+
+### Update and rollback
+
+Back up the room registry and record the current revision before updating:
+
+```bash
+cd /opt/ninjitsi/ninjitsi
+git rev-parse HEAD | tee /opt/ninjitsi/ninjitsi-last-good-revision
+sudo docker image tag ninjitsi-web:latest ninjitsi-web:rollback
 git pull --ff-only
-sudo docker compose up -d --build
+sudo docker compose build
+sudo docker compose up -d
 curl --fail https://call.example.com/api/health
 ```
 
-Back up the room registry:
+If the new application image fails, restore the previous image without rebuilding:
 
 ```bash
-cd /opt/ninjitsi
-sudo docker run --rm \
-  -v ninjitsi_ninjitsi-data:/data:ro \
-  -v "$PWD":/backup \
-  alpine tar -C /data -czf /backup/ninjitsi-data.tgz .
+cd /opt/ninjitsi/ninjitsi
+sudo docker compose stop web
+sudo docker image tag ninjitsi-web:rollback ninjitsi-web:latest
+sudo docker compose up -d --no-build web
+curl --fail http://127.0.0.1:3000/api/health
 ```
 
-Upgrade Jitsi by following its release notes and official Docker upgrade procedure; keep `/opt/ninjitsi/jitsi-config` and the generated secrets. Do not replace a production Jitsi release with the repository's development branch.
+Restore the room backup as well only when a release changed the stored schema and its release notes explicitly require it.
 
-Reference documentation: [Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/), [Jitsi Docker deployment](https://jitsi.github.io/handbook/docs/devops-guide/devops-guide-docker/), and [Caddy installation](https://caddyserver.com/docs/install#debian-ubuntu-raspbian).
+Upgrade Jitsi separately, following the selected release notes and official Docker migration guide. Keep `/opt/ninjitsi/jitsi-config`, the generated service passwords, and the shared JWT secret. Never rotate `JWT_APP_SECRET` on only one side: Jitsi and Ninjitsi must change together during a maintenance window.
 
 ## Client instructions
 
 Nothing is installed on the client computer.
 
-1. The room creator opens `https://call.example.com` in a current desktop Chrome or Edge.
-2. They choose or create a local profile, optionally enter a room password, and select **Create room**.
-3. Ninjitsi creates the room and opens a direct URL such as `https://call.example.com/room/quiet-studio-04210`.
-4. The creator copies that URL from the address bar or the copy-link button and sends it to the guests. The password, when present, must be sent separately.
-5. A guest opens the link, selects or creates a profile, enters the password when required, and selects **Join room**.
-6. On first use, the guest allows microphone and camera access. Screen sharing opens a separate browser/system picker.
-7. Devices and noise suppression can be changed from the settings button during the meeting. No account is required.
+1. The creator opens `https://call.example.com` in current desktop Chrome or Edge.
+2. They select or create a local profile, optionally enter a room password, and select **Create room**.
+3. Ninjitsi creates the room and opens a direct URL such as `https://call.example.com/room/quiet-studio-0123456789abcdef01234567`.
+4. The creator sends that URL to guests. A room password, when used, should be sent separately.
+5. A guest opens the link, selects a profile, enters the password, and selects **Join room**.
+6. On first use, the guest allows camera and microphone access. Screen sharing opens the browser/system picker.
 
-Profiles and avatars stay only in that browser's local storage. Chat messages and attachments live only in the active conference and are not uploaded to the Ninjitsi room server.
+Profiles and avatars remain in that browser's local storage. A server-issued Jitsi token remains only in the active page and expires after twelve hours by default.
 
 ## Features
 
-- **Local profiles:** reusable display names and avatars stored in the client's browser, with profile creation, editing, selection, and deletion.
-- **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a large stage while the other participants form a row below.
-- **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API when the browser and Jitsi build support AudioWorklet.
-- **Private messages:** text or attachments can be addressed to one or more selected participants through Jitsi endpoint messages.
-- **Replies and meeting alerts:** click a message to reply with a quote or send only to its author; private replies keep the original recipient set, and clicking a quote jumps to and highlights its source. Collapsed-chat messages glow and play an alert, while participant joins and departures have separate room sounds.
-- **Personal volume:** each remote participant can be adjusted locally from 0% to 200%; the setting changes only what the current client hears. Local microphone audio is never attached to the client's own output.
-- **Chat attachments:** drag-and-drop and file-picker delivery up to 2 MB per file; images open in an in-app preview and transparent PNGs retain their alpha channel. Attachments disappear with the conference.
-- **Bilingual interface:** English is the default; Russian and English can be switched on the home page or during a meeting.
+- **Local profiles:** reusable names and avatars stored in the client's browser.
+- **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage.
+- **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API.
+- **Private messages and replies:** text and attachments can target selected participants; private replies retain their recipient set.
+- **Personal volume:** every remote participant can be adjusted locally from 0% to 200%; local microphone audio is never attached to local output.
+- **Chat attachments:** drag-and-drop or file-picker delivery up to 2 MB; images open in an in-app preview and transparent PNGs retain alpha.
+- **Meeting alerts:** participant, message, and initial-room sounds plus unread-chat indication.
+- **Bilingual interface:** English by default, with English/Russian switching on the landing page and in meeting settings.
 
 ## Technical checks
 
-Install Node.js 22 and project dependencies before repository-level checks:
+Repository checks require Node.js 22.20 or newer and npm 10 or newer:
 
 ```bash
 npm ci
-npm run typecheck
+npm audit --audit-level=moderate
+npm test
 npm run lint
-npm run build
+npm run typecheck
+npm run build:cloudflare
 ```
 
-For a disposable local Jitsi + Ninjitsi stack, Docker Desktop is supported on Windows and Docker Engine on Linux:
+`npm test` covers room-code entropy, rate limiting, `scrypt` concurrency, JWT signatures and claims, expiration migration, non-evicting capacity, security headers, and admission-token issuance.
+
+Validate the production Compose model without printing its expanded secret:
+
+```bash
+JITSI_JWT_SECRET=$(openssl rand -hex 32) docker compose config --quiet
+```
+
+For a disposable local Jitsi + Ninjitsi stack:
 
 ```powershell
 # Windows PowerShell
@@ -315,9 +416,9 @@ npm run stack:status
 ./scripts/stack.sh status
 ```
 
-The local endpoints are `http://localhost:3000` for Ninjitsi and `http://localhost:8000` for Jitsi. The scripts download the pinned Jitsi release into `.local/`, generate secrets, and determine `JVB_ADVERTISE_IPS`; override detection with `NINJITSI_JVB_ADVERTISE_IPS=address` when necessary.
+The scripts download the pinned Jitsi release into `.local/`, generate a shared JWT secret, configure token-only admission, create the rootless directory layout, and start Ninjitsi at `http://localhost:3000` with Jitsi at `http://localhost:8000`.
 
-With Ninjitsi running, execute UI and API smoke checks:
+With Ninjitsi running:
 
 ```bash
 npm run smoke:rooms
@@ -325,7 +426,7 @@ npm run smoke:profiles
 npm run smoke:visual
 ```
 
-Run the real media check against a reachable Jitsi instance:
+Run the real media suite against a reachable Jitsi instance:
 
 ```bash
 NINJITSI_BASE_URL=http://localhost:3000 \
@@ -333,17 +434,7 @@ NINJITSI_JITSI_URL=http://localhost:8000 \
 npm run smoke:jitsi
 ```
 
-On PowerShell:
-
-```powershell
-$env:NINJITSI_BASE_URL = "http://localhost:3000"
-$env:NINJITSI_JITSI_URL = "http://localhost:8000"
-npm run smoke:jitsi
-```
-
-The Jitsi smoke check creates a server-issued room and multiple isolated browser clients. It verifies microphone and camera publication, remote audio/video reception, absence of local audio playback, screen sharing, replies and private-message isolation, automatic recipient reset, unread/chat and participant sounds, attachments and transparent image preview, a stable grid while chat animates, per-participant volume up to 200%, connection statistics, stage mode, device settings, noise-suppression support, and recovery after an initial device-access failure.
-
-For a long-session transport check, keep the clients connected for the required duration:
+For the required six-hour transport check:
 
 ```bash
 NINJITSI_STABILITY_MS=21600000 \
@@ -352,4 +443,6 @@ NINJITSI_JITSI_URL=https://jitsi.example.com \
 npm run smoke:jitsi
 ```
 
-`21600000` ms is six hours. A production acceptance test must use two physical networks and real devices; a headless browser on the Docker host cannot prove NAT, firewall, TURN, echo-cancellation, or six-hour Internet stability.
+The media suite verifies publication and reception of camera/microphone tracks, absence of local audio playback, screen sharing, private chat isolation, replies, attachments, stable grid behavior, per-participant volume, connection statistics, stage mode, device switching, noise suppression, and transport recovery. A production acceptance run still needs real devices on at least two physical networks; a browser on the Docker host cannot prove NAT, firewall, TURN, acoustic, or six-hour Internet behavior.
+
+Official references: [Jitsi Docker deployment](https://jitsi.github.io/handbook/docs/devops-guide/devops-guide-docker/), [Jitsi token authentication](https://jitsi.github.io/handbook/docs/devops-guide/token-authentication/), [Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/), and [Caddy installation](https://caddyserver.com/docs/install#debian-ubuntu-raspbian).

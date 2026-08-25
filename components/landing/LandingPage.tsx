@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Camera,
@@ -32,6 +33,7 @@ import styles from "./LandingPage.module.css";
 type LandingMode = "create" | "join";
 
 export function LandingPage() {
+  const router = useRouter();
   const { locale, setLocale, tr } = useI18n();
   const [mode, setMode] = useState<LandingMode>("create");
   const [roomName, setRoomName] = useState("");
@@ -89,7 +91,7 @@ export function LandingPage() {
         startVideoMuted: false,
       });
 
-      window.location.assign(`/room/${encodeURIComponent(targetRoom)}`);
+      router.push(`/room/${encodeURIComponent(targetRoom)}`);
     } catch (caughtError) {
       setError(
         caughtError instanceof RoomApiError

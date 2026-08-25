@@ -2,7 +2,7 @@
 set -eu
 
 action=${1:-up}
-jitsi_version=stable-11031
+jitsi_version=stable-11146-2
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 local_root="$project_root/.local"
@@ -12,6 +12,11 @@ release_url="https://github.com/jitsi/docker-jitsi-meet/archive/refs/tags/$jitsi
 
 secret() {
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+get_jitsi_env_value() {
+  setting_name=$1
+  awk -F= -v key="$setting_name" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' "$jitsi_root/.env"
 }
 
 detect_jvb_advertise_ips() {
@@ -52,6 +57,14 @@ prepare_jitsi() {
 
   if [ "$prepared_version" != "$jitsi_version" ]; then
     if [ -d "$jitsi_root" ]; then
+      if [ "$action" != "up" ]; then
+        echo "Jitsi $prepared_version is prepared; run stack:up to migrate to $jitsi_version." >&2
+        exit 1
+      fi
+
+      echo "Stopping the previous Jitsi release before migration..."
+      (cd "$jitsi_root" && docker compose down)
+
       mv "$jitsi_root" "$local_root/jitsi-backup-$(date +%Y%m%d-%H%M%S)"
     fi
 
@@ -84,8 +97,16 @@ TZ=Etc/UTC
 PUBLIC_URL=https://localhost:8443
 JVB_ADVERTISE_IPS=$jvb_advertise_ips
 DOCKER_HOST_ADDRESS=$docker_host_address
-ENABLE_AUTH=0
-ENABLE_GUESTS=1
+ENABLE_AUTH=1
+ENABLE_GUESTS=0
+AUTH_TYPE=jwt
+JWT_APP_ID=ninjitsi
+JWT_APP_SECRET=$(secret)
+JWT_ACCEPTED_ISSUERS=ninjitsi
+JWT_ACCEPTED_AUDIENCES=ninjitsi
+JWT_ALLOW_EMPTY=0
+JWT_AUTH_TYPE=token
+JWT_TOKEN_AUTH_MODULE=token_verification
 ENABLE_LETSENCRYPT=0
 ENABLE_HTTP_REDIRECT=0
 ENABLE_PREJOIN_PAGE=0
@@ -111,30 +132,39 @@ EOF
     "$jitsi_root/.env"
   rm -f "$jitsi_root/.env.bak"
 
+  mkdir -p \
+    "$jitsi_root/config/web" \
+    "$jitsi_root/config/prosody/config" \
+    "$jitsi_root/config/prosody/prosody-plugins-custom" \
+    "$jitsi_root/config/jicofo" \
+    "$jitsi_root/config/jvb" \
+    "$jitsi_root/config/jigasi" \
+    "$jitsi_root/config/jibri" \
+    "$jitsi_root/config/transcriber" \
+    "$jitsi_root/config/storage/jibri" \
+    "$jitsi_root/config/storage/prosody" \
+    "$jitsi_root/config/storage/transcripts" \
+    "$jitsi_root/config/storage/web" \
+    "$jitsi_root/config/tmp/web-crontabs" \
+    "$jitsi_root/config/tmp/web-load-test"
+  chmod 0777 \
+    "$jitsi_root/config/storage/jibri" \
+    "$jitsi_root/config/storage/prosody" \
+    "$jitsi_root/config/storage/transcripts" \
+    "$jitsi_root/config/storage/web" \
+    "$jitsi_root/config/tmp/web-crontabs" \
+    "$jitsi_root/config/tmp/web-load-test"
+
   echo "Jitsi подготовлен в $jitsi_root (media address: $jvb_advertise_ips)"
 }
 
 set_local_jitsi_browser_config() {
-  config_file="$jitsi_root/config/web/config.js"
-  attempt=0
-
-  while [ "$attempt" -lt 15 ]; do
-    if [ -f "$config_file" ] && grep -q 'config\.bosh' "$config_file"; then
-      sed -i.bak \
-        -e "s|^config\\.bosh = .*$|config.bosh = 'http://localhost:8000/http-bind';|" \
-        -e "s|^config\\.websocket = .*$|config.websocket = 'ws://localhost:8000/xmpp-websocket';|" \
-        "$config_file"
-      rm -f "$config_file.bak"
-      echo "Jitsi browser signaling uses local HTTP endpoints."
-      return
-    fi
-
-    attempt=$((attempt + 1))
-    sleep 2
-  done
-
-  echo "Jitsi config.js was not generated within 30 seconds." >&2
-  exit 1
+  config_file="$jitsi_root/config/web/custom-config.js"
+  printf '%s\n' \
+    "config.bosh = 'http://localhost:8000/http-bind';" \
+    "config.websocket = 'ws://localhost:8000/xmpp-websocket';" \
+    > "$config_file"
+  echo "Jitsi browser signaling uses local HTTP endpoints."
 }
 
 case "$action" in
@@ -155,11 +185,23 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-prepare_jitsi
+if [ "$action" = "up" ]; then
+  prepare_jitsi
+elif [ ! -f "$jitsi_root/.env" ]; then
+  echo "Jitsi is not prepared. Run stack:up first." >&2
+  exit 1
+fi
+
+JITSI_AUTH_MODE=token
+JITSI_JWT_APP_ID=$(get_jitsi_env_value JWT_APP_ID)
+JITSI_JWT_AUDIENCE=$JITSI_JWT_APP_ID
+JITSI_JWT_SUBJECT=meet.jitsi
+JITSI_JWT_SECRET=$(get_jitsi_env_value JWT_APP_SECRET)
+export JITSI_AUTH_MODE JITSI_JWT_APP_ID JITSI_JWT_AUDIENCE JITSI_JWT_SUBJECT JITSI_JWT_SECRET
 
 if [ "$action" = "up" ]; then
-  (cd "$jitsi_root" && docker compose up -d)
   set_local_jitsi_browser_config
+  (cd "$jitsi_root" && docker compose up -d)
   (cd "$project_root" && docker compose up -d --build)
 elif [ "$action" = "down" ]; then
   (cd "$jitsi_root" && docker compose down)

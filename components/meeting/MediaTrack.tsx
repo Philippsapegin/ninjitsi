@@ -55,6 +55,7 @@ export function AudioTrack({
   volume,
 }: AudioTrackProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const volumeRef = useRef(volume);
 
@@ -78,7 +79,9 @@ export function AudioTrack({
         const context = getAudioContext();
         gain = context.createGain();
 
-        source = context.createMediaElementSource(element);
+        source =
+          sourceRef.current ?? context.createMediaElementSource(element);
+        sourceRef.current = source;
         source.connect(gain);
         gain.connect(context.destination);
         gain.gain.value = volumeRef.current;

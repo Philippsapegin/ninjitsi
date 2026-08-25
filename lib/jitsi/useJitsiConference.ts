@@ -29,6 +29,7 @@ export interface JoinOptions {
   avatarDataUrl: string;
   displayName: string;
   isCreator: boolean;
+  jitsiToken?: string | null;
   password: string;
   profileId: string;
   startAudioMuted: boolean;
@@ -922,7 +923,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
           });
         };
 
-        const connection = new library.JitsiConnection(null, null, config);
+        const connection = new library.JitsiConnection(
+          null,
+          options.jitsiToken ?? null,
+          config,
+        );
         const connectionEvents = library.events.connection;
 
         connectionRef.current = connection;

@@ -1,0 +1,24 @@
+{
+	email admin@example.com
+}
+
+call.example.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:3000 {
+		stream_close_delay 5m
+	}
+}
+
+jitsi.example.com {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8000 {
+		stream_close_delay 5m
+	}
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Check,
@@ -52,6 +53,7 @@ type RoomGate =
   | { status: "failed"; error: string };
 
 export function MeetingRoom({ roomName }: MeetingRoomProps) {
+  const router = useRouter();
   const { locale, tr } = useI18n();
   const conference = useJitsiConference(roomName);
   const roomApiEnabled = useRoomApiEnabled();
@@ -292,12 +294,20 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
     try {
       if (roomApiEnabled) {
-        const room = await authorizeRoom(roomName, details.password);
+        const admission = await authorizeRoom(
+          roomName,
+          details.password,
+          details.displayName,
+        );
 
-        setProtectedRoom(room.passwordRequired);
+        setProtectedRoom(admission.room.passwordRequired);
+        await conference.join({
+          ...details,
+          jitsiToken: admission.jitsiToken,
+        });
+      } else {
+        await conference.join(details);
       }
-
-      await conference.join(details);
     } catch (caughtError) {
       setAdmissionError(
         caughtError instanceof RoomApiError
@@ -314,7 +324,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
   async function hangup() {
     await conference.leave();
-    window.location.assign("/");
+    router.push("/");
   }
 
   async function copyLink() {
@@ -361,7 +371,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
               <p>{roomGate.error}</p>
               <div className={styles.gateActions}>
                 <button
-                  onClick={() => window.location.assign("/")}
+                  onClick={() => router.push("/")}
                   type="button"
                 >
                   <ArrowLeft size={16} />

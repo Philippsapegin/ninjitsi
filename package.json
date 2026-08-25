@@ -2,6 +2,10 @@
   "name": "ninjitsi",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.20 <27",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
@@ -11,6 +15,7 @@
     "start:next": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
     "smoke:rooms": "node scripts/room-smoke.mjs",
     "smoke:visual": "node scripts/visual-smoke.mjs",
     "smoke:jitsi": "node scripts/jitsi-smoke.mjs",
@@ -21,26 +26,29 @@
     "stack:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 status"
   },
   "dependencies": {
-    "@opennextjs/cloudflare": "^1.20.2",
-    "lucide-react": "^1.27.0",
-    "next": "^16.2.12",
+    "lucide-react": "^1.34.0",
+    "next": "^16.3.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.2",
     "@types/node": "^24.10.0",
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "eslint": "^9.39.1",
-    "eslint-config-next": "^16.2.12",
-    "playwright-core": "^1.62.0",
+    "eslint-config-next": "^16.3.2",
+    "playwright-core": "^1.62.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.125.0"
   },
   "overrides": {
-    "brace-expansion": "^5.0.8",
-    "minimatch": "^10.2.5",
-    "postcss": "^8.5.23",
-    "sharp": "^0.35.3"
+    "brace-expansion": "^5.0.9",
+    "js-yaml": "^4.3.1",
+    "minimatch": "^10.2.6",
+    "nanoid": "^3.3.18",
+    "postcss": "^8.5.26",
+    "sharp": "^0.35.3",
+    "undici": "^7.29.0"
   }
 }

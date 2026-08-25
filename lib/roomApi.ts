@@ -3,6 +3,7 @@ import { getStoredLocale, localize } from "@/lib/i18n";
 export interface RoomRecord {
   code: string;
   createdAt: string;
+  expiresAt: string;
   passwordRequired: boolean;
 }
 
@@ -12,6 +13,11 @@ interface RoomResponse {
 
 interface CreateRoomResponse extends RoomResponse {
   joinPath: string;
+}
+
+interface RoomAdmissionResponse extends RoomResponse {
+  admitted: true;
+  jitsiToken: string | null;
 }
 
 export class RoomApiError extends Error {
@@ -95,13 +101,13 @@ export async function getRoom(code: string): Promise<RoomRecord> {
 export async function authorizeRoom(
   code: string,
   password: string,
-): Promise<RoomRecord> {
-  const response = await roomRequest<
-    RoomResponse & { admitted: true }
-  >(`/api/rooms/${encodeURIComponent(code)}/join`, {
-    body: JSON.stringify({ password }),
-    method: "POST",
-  });
-
-  return response.room;
+  displayName: string,
+): Promise<RoomAdmissionResponse> {
+  return roomRequest<RoomAdmissionResponse>(
+    `/api/rooms/${encodeURIComponent(code)}/join`,
+    {
+      body: JSON.stringify({ displayName, password }),
+      method: "POST",
+    },
+  );
 }

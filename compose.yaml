@@ -1,16 +1,78 @@
 name: ninjitsi
 
 services:
-  web:
-    build:
-      context: .
-    environment:
-      JITSI_URL: ${JITSI_URL:-http://localhost:8000}
-    ports:
-      - "${NINJITSI_PORT:-3000}:80"
-    restart: unless-stopped
+  data-init:
+    image: ninjitsi-web:latest
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        chown -R 1000:1000 /data
+        chmod 0700 /data
+        if [ -f /data/rooms.json ]; then chmod 0600 /data/rooms.json; fi
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    pids_limit: 20
     volumes:
       - ninjitsi-data:/data
+
+  web:
+    image: ninjitsi-web:latest
+    build:
+      context: .
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      JITSI_URL: ${JITSI_URL:-http://localhost:8000}
+      JITSI_AUTH_MODE: ${JITSI_AUTH_MODE:-token}
+      JITSI_JWT_APP_ID: ${JITSI_JWT_APP_ID:-ninjitsi}
+      JITSI_JWT_AUDIENCE: ${JITSI_JWT_AUDIENCE:-ninjitsi}
+      JITSI_JWT_SUBJECT: ${JITSI_JWT_SUBJECT:-meet.jitsi}
+      JITSI_JWT_SECRET: ${JITSI_JWT_SECRET:?Generate JITSI_JWT_SECRET with openssl rand -hex 32}
+      JITSI_JWT_TTL_SECONDS: ${JITSI_JWT_TTL_SECONDS:-43200}
+      MAX_ROOMS: ${MAX_ROOMS:-10000}
+      ROOM_TTL_HOURS: ${ROOM_TTL_HOURS:-720}
+      ROOM_CREATE_RATE_LIMIT: ${ROOM_CREATE_RATE_LIMIT:-10}
+      ROOM_CREATE_RATE_WINDOW_SECONDS: ${ROOM_CREATE_RATE_WINDOW_SECONDS:-600}
+      ROOM_CREATE_GLOBAL_RATE_LIMIT: ${ROOM_CREATE_GLOBAL_RATE_LIMIT:-120}
+      ROOM_JOIN_RATE_LIMIT: ${ROOM_JOIN_RATE_LIMIT:-30}
+      ROOM_JOIN_GLOBAL_RATE_LIMIT: ${ROOM_JOIN_GLOBAL_RATE_LIMIT:-600}
+      ROOM_PASSWORD_RATE_LIMIT: ${ROOM_PASSWORD_RATE_LIMIT:-10}
+      ROOM_LOOKUP_RATE_LIMIT: ${ROOM_LOOKUP_RATE_LIMIT:-120}
+      SCRYPT_MAX_CONCURRENCY: ${SCRYPT_MAX_CONCURRENCY:-2}
+      SCRYPT_MAX_QUEUE: ${SCRYPT_MAX_QUEUE:-8}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+    ports:
+      - "${NINJITSI_PORT:-127.0.0.1:3000}:8080"
+    init: true
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 200
+    stop_grace_period: 20s
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    volumes:
+      - ninjitsi-data:/data
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
 
 volumes:
   ninjitsi-data:

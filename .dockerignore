@@ -1,8 +1,13 @@
 .git
+.data
+.env
+.env.*
 .next
 .open-next
+.openai
 .wrangler
 .local
 node_modules
 npm-debug.log*
+tests
 *.tsbuildinfo

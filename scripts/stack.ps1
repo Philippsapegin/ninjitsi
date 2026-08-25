@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$JitsiVersion = "stable-11031"
+$JitsiVersion = "stable-11146-2"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $LocalRoot = Join-Path $ProjectRoot ".local"
 $JitsiRoot = Join-Path $LocalRoot "jitsi"
@@ -29,6 +29,21 @@ function Assert-Command {
 
 function New-Secret {
   return ([guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N"))
+}
+
+function Get-JitsiEnvValue {
+  param([string]$Name)
+
+  $EnvPath = Join-Path $JitsiRoot ".env"
+  $Match = Get-Content -LiteralPath $EnvPath |
+    Where-Object { $_ -match "^$([regex]::Escape($Name))=" } |
+    Select-Object -Last 1
+
+  if (-not $Match) {
+    throw "Jitsi setting '$Name' is missing from $EnvPath."
+  }
+
+  return ($Match -split "=", 2)[1]
 }
 
 function Get-JvbAdvertiseIps {
@@ -65,10 +80,20 @@ function Get-JvbAdvertiseIps {
   return ($Addresses -join ",")
 }
 
-function Initialize-Docker {
-  docker info *> $null
+function Test-DockerReady {
+  $PreviousErrorPreference = $ErrorActionPreference
 
-  if ($LASTEXITCODE -eq 0) {
+  try {
+    $ErrorActionPreference = "SilentlyContinue"
+    docker info *> $null
+    return $LASTEXITCODE -eq 0
+  } finally {
+    $ErrorActionPreference = $PreviousErrorPreference
+  }
+}
+
+function Initialize-Docker {
+  if (Test-DockerReady) {
     return
   }
 
@@ -89,9 +114,8 @@ function Initialize-Docker {
 
   for ($Attempt = 0; $Attempt -lt 30; $Attempt += 1) {
     Start-Sleep -Seconds 2
-    docker info *> $null
 
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-DockerReady) {
       return
     }
   }
@@ -111,6 +135,22 @@ function Initialize-Jitsi {
 
   if ($PreparedVersion -ne $JitsiVersion) {
     if (Test-Path $JitsiRoot) {
+      if ($Action -ne "up") {
+        throw "Jitsi $PreparedVersion is prepared; run stack:up to migrate to $JitsiVersion."
+      }
+
+      Write-Host "Stopping the previous Jitsi release before migration..."
+      Push-Location $JitsiRoot
+      try {
+        docker compose down
+
+        if ($LASTEXITCODE -ne 0) {
+          throw "The previous Jitsi stack could not be stopped safely."
+        }
+      } finally {
+        Pop-Location
+      }
+
       $BackupName = "jitsi-backup-{0}" -f (Get-Date -Format "yyyyMMdd-HHmmss")
       Move-Item -LiteralPath $JitsiRoot -Destination (Join-Path $LocalRoot $BackupName)
     }
@@ -155,8 +195,16 @@ function Initialize-Jitsi {
       "PUBLIC_URL=https://localhost:8443",
       "JVB_ADVERTISE_IPS=$JvbAdvertiseIps",
       "DOCKER_HOST_ADDRESS=$($JvbAdvertiseIps.Split(',')[0])",
-      "ENABLE_AUTH=0",
-      "ENABLE_GUESTS=1",
+      "ENABLE_AUTH=1",
+      "ENABLE_GUESTS=0",
+      "AUTH_TYPE=jwt",
+      "JWT_APP_ID=ninjitsi",
+      "JWT_APP_SECRET=$(New-Secret)",
+      "JWT_ACCEPTED_ISSUERS=ninjitsi",
+      "JWT_ACCEPTED_AUDIENCES=ninjitsi",
+      "JWT_ALLOW_EMPTY=0",
+      "JWT_AUTH_TYPE=token",
+      "JWT_TOKEN_AUTH_MODULE=token_verification",
       "ENABLE_LETSENCRYPT=0",
       "ENABLE_HTTP_REDIRECT=0",
       "ENABLE_PREJOIN_PAGE=0",
@@ -191,37 +239,38 @@ function Initialize-Jitsi {
     Set-Content -Encoding UTF8 -NoNewline -LiteralPath $EnvPath -Value $UpdatedEnvContent
   }
 
+  $ConfigDirectories = @(
+    "web",
+    "prosody/config",
+    "prosody/prosody-plugins-custom",
+    "jicofo",
+    "jvb",
+    "jigasi",
+    "jibri",
+    "transcriber",
+    "storage/jibri",
+    "storage/prosody",
+    "storage/transcripts",
+    "storage/web",
+    "tmp/web-crontabs",
+    "tmp/web-load-test"
+  )
+  $ConfigDirectories | ForEach-Object {
+    New-Item -ItemType Directory -Force -Path (Join-Path $JitsiRoot "config/$_") | Out-Null
+  }
+
   Write-Host "Jitsi is prepared in $JitsiRoot (media address: $JvbAdvertiseIps)"
 }
 
 function Set-LocalJitsiBrowserConfig {
-  $ConfigPath = Join-Path $JitsiRoot "config\web\config.js"
+  $ConfigPath = Join-Path $JitsiRoot "config\web\custom-config.js"
+  $Config = @(
+    "config.bosh = 'http://localhost:8000/http-bind';",
+    "config.websocket = 'ws://localhost:8000/xmpp-websocket';"
+  ) -join [Environment]::NewLine
 
-  for ($Attempt = 0; $Attempt -lt 15; $Attempt += 1) {
-    if (Test-Path -LiteralPath $ConfigPath) {
-      $ConfigContent = Get-Content -Raw -LiteralPath $ConfigPath
-
-      if ($ConfigContent -match "config\.bosh") {
-        $UpdatedConfig = [regex]::Replace(
-          $ConfigContent,
-          "(?m)^config\.bosh = .*$",
-          "config.bosh = 'http://localhost:8000/http-bind';"
-        )
-        $UpdatedConfig = [regex]::Replace(
-          $UpdatedConfig,
-          "(?m)^config\.websocket = .*$",
-          "config.websocket = 'ws://localhost:8000/xmpp-websocket';"
-        )
-        Set-Content -Encoding UTF8 -NoNewline -LiteralPath $ConfigPath -Value $UpdatedConfig
-        Write-Host "Jitsi browser signaling uses local HTTP endpoints."
-        return
-      }
-    }
-
-    Start-Sleep -Seconds 2
-  }
-
-  throw "Jitsi config.js was not generated within 30 seconds."
+  Set-Content -Encoding ASCII -NoNewline -LiteralPath $ConfigPath -Value $Config
+  Write-Host "Jitsi browser signaling uses local HTTP endpoints."
 }
 
 if ($Action -eq "prepare") {
@@ -231,7 +280,22 @@ if ($Action -eq "prepare") {
 
 Assert-Command "docker"
 Initialize-Docker
-Initialize-Jitsi
+
+if ($Action -eq "up") {
+  Initialize-Jitsi
+} elseif (-not (Test-Path (Join-Path $JitsiRoot ".env"))) {
+  throw "Jitsi is not prepared. Run stack:up first."
+}
+
+$env:JITSI_AUTH_MODE = "token"
+$env:JITSI_JWT_APP_ID = Get-JitsiEnvValue "JWT_APP_ID"
+$env:JITSI_JWT_AUDIENCE = $env:JITSI_JWT_APP_ID
+$env:JITSI_JWT_SUBJECT = "meet.jitsi"
+$env:JITSI_JWT_SECRET = Get-JitsiEnvValue "JWT_APP_SECRET"
+
+if ($Action -eq "up") {
+  Set-LocalJitsiBrowserConfig
+}
 
 Push-Location $JitsiRoot
 try {
@@ -244,12 +308,12 @@ try {
   } elseif ($Action -eq "logs") {
     docker compose logs --tail 100
   }
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "The Jitsi Docker Compose action '$Action' failed."
+  }
 } finally {
   Pop-Location
-}
-
-if ($Action -eq "up") {
-  Set-LocalJitsiBrowserConfig
 }
 
 Push-Location $ProjectRoot
@@ -262,6 +326,10 @@ try {
     docker compose ps
   } elseif ($Action -eq "logs") {
     docker compose logs --tail 100
+  }
+
+  if ($LASTEXITCODE -ne 0) {
+    throw "The Ninjitsi Docker Compose action '$Action' failed."
   }
 } finally {
   Pop-Location

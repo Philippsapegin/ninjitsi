@@ -1,0 +1,25 @@
+services:
+  web:
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+  prosody:
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+  jicofo:
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+  jvb:
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"

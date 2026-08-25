@@ -107,6 +107,106 @@ async function createServerRoom() {
   return body.room.code;
 }
 
+async function assertTokenlessJitsiRejected(browserContext, protectedRoomName) {
+  const authPage = await browserContext.newPage();
+
+  try {
+    await authPage.goto(baseUrl, { waitUntil: "networkidle" });
+    const result = await authPage.evaluate(
+      async ({ room, serverUrl }) => {
+        const loadScript = (source) =>
+          new Promise((resolveLoad, rejectLoad) => {
+            const script = document.createElement("script");
+
+            script.src = source;
+            script.onload = resolveLoad;
+            script.onerror = () => rejectLoad(new Error(`Could not load ${source}`));
+            document.head.appendChild(script);
+          });
+
+        await loadScript(`${serverUrl}/config.js`);
+        await loadScript(`${serverUrl}/libs/lib-jitsi-meet.min.js`);
+
+        const library = window.JitsiMeetJS;
+        const deploymentConfig = window.config;
+        const absoluteUrl = (value) =>
+          typeof value === "string" && value
+            ? new URL(value, `${serverUrl}/`).toString()
+            : undefined;
+        const bosh = absoluteUrl(deploymentConfig.bosh);
+        const websocket = absoluteUrl(deploymentConfig.websocket);
+        const serviceUrl = new URL(websocket ?? bosh);
+
+        serviceUrl.searchParams.set("room", room);
+        library.init({ disableThirdPartyRequests: true });
+
+        return new Promise((resolveAdmission, rejectAdmission) => {
+          const connection = new library.JitsiConnection(null, null, {
+            ...deploymentConfig,
+            bosh,
+            serviceUrl: serviceUrl.toString(),
+            websocket,
+          });
+          const timeout = window.setTimeout(() => {
+            void connection.disconnect();
+            rejectAdmission(
+              new Error("Tokenless Jitsi admission did not resolve in time"),
+            );
+          }, 30_000);
+          const finish = (outcome) => {
+            window.clearTimeout(timeout);
+            void connection.disconnect();
+            resolveAdmission(outcome);
+          };
+
+          connection.addEventListener(
+            library.events.connection.CONNECTION_FAILED,
+            (reason) => finish({ outcome: "rejected", reason }),
+          );
+          connection.addEventListener(
+            library.events.connection.CONNECTION_ESTABLISHED,
+            () => {
+              const conference = connection.initJitsiConference(room, {
+                ...deploymentConfig,
+                bosh,
+                serviceUrl: serviceUrl.toString(),
+                websocket,
+              });
+
+              conference.on(
+                library.events.conference.CONFERENCE_FAILED,
+                (reason) => finish({ outcome: "rejected", reason }),
+              );
+              conference.on(
+                library.events.conference.CONFERENCE_JOINED,
+                () => finish({ outcome: "accepted" }),
+              );
+              conference.join();
+            },
+          );
+          connection.connect();
+        });
+      },
+      { room: protectedRoomName, serverUrl: jitsiUrl.replace(/\/+$/, "") },
+    );
+
+    if (
+      result.outcome !== "rejected" ||
+      !["connection.passwordRequired", "conference.authenticationRequired"].includes(
+        result.reason,
+      )
+    ) {
+      throw new Error(
+        `Jitsi did not prove token-only admission: ${JSON.stringify(result)}`,
+      );
+    }
+
+    return result;
+  } finally {
+    await authPage.close();
+  }
+}
+
 const roomName = await createServerRoom();
 const browser = await chromium.launch({
   args: [
@@ -119,6 +219,18 @@ const browser = await chromium.launch({
   executablePath,
   headless: true,
 });
+const authContext = await browser.newContext();
+let tokenlessAdmission;
+
+try {
+  tokenlessAdmission = await assertTokenlessJitsiRejected(
+    authContext,
+    roomName,
+  );
+} finally {
+  await authContext.close();
+}
+
 const context = await browser.newContext({
   permissions: ["camera", "microphone"],
 });
@@ -989,6 +1101,7 @@ try {
         },
         roomName,
         status: "joined",
+        tokenlessAdmission,
         tileCount: await page.locator("[data-video-tile]").count(),
         transport: forceJvb ? "JVB forced" : "deployment default",
         transportRecoveryErrors: allowTransportRecoveryErrors
