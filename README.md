@@ -47,6 +47,8 @@ getent ahostsv4 jitsi.example.com
 ```
 
 Open the public ports. Keep SSH limited to trusted addresses when possible.
+Replace `22` below if the server uses a different SSH port; verify the SSH rule
+before enabling UFW so that the current session is not locked out.
 
 ```bash
 sudo ufw allow 22/tcp
@@ -91,6 +93,8 @@ The remaining examples use `sudo docker`. Membership in the `docker` group is ro
 ### 3. Download Ninjitsi and Jitsi
 
 Ninjitsi is tested against the official `docker-jitsi-meet stable-11146-2` release.
+Keep this version pinned until a newer Jitsi release has passed the media checks
+at the end of this document.
 
 ```bash
 sudo mkdir -p /opt/ninjitsi
@@ -98,11 +102,12 @@ sudo chown "$USER":"$USER" /opt/ninjitsi
 cd /opt/ninjitsi
 git clone https://github.com/Philippsapegin/ninjitsi.git
 
+JITSI_RELEASE=stable-11146-2
 curl -fL \
-  https://github.com/jitsi/docker-jitsi-meet/archive/refs/tags/stable-11146-2.zip \
+  "https://github.com/jitsi/docker-jitsi-meet/archive/refs/tags/${JITSI_RELEASE}.zip" \
   -o docker-jitsi-meet.zip
 unzip docker-jitsi-meet.zip
-mv docker-jitsi-meet-stable-11146-2 jitsi
+mv "docker-jitsi-meet-${JITSI_RELEASE}" jitsi
 rm docker-jitsi-meet.zip
 ```
 
@@ -140,6 +145,8 @@ cat >> .env <<EOF
 
 # Ninjitsi production settings
 CONFIG=/opt/ninjitsi/jitsi-config
+JITSI_IMAGE_VERSION=stable-11146-2
+RESTART_POLICY=unless-stopped
 HTTP_PORT=127.0.0.1:8000
 HTTPS_PORT=127.0.0.1:8443
 TZ=UTC
@@ -168,6 +175,10 @@ EOF
 cp /opt/ninjitsi/ninjitsi/deploy/jitsi-compose.override.yml \
   /opt/ninjitsi/jitsi/docker-compose.override.yml
 ```
+
+These lines intentionally come last in `.env` and override matching defaults
+from the release archive. Keep `JITSI_IMAGE_VERSION` equal to the downloaded
+release directory.
 
 The override bounds Docker log growth. Validate the effective configuration before starting anything:
 
@@ -217,7 +228,8 @@ chmod 0600 .env
 sudo docker compose config --quiet
 sudo docker compose up -d --build
 sudo docker compose ps
-curl --fail http://127.0.0.1:3000/api/health
+curl --fail --show-error --retry 30 --retry-delay 1 --retry-all-errors \
+  http://127.0.0.1:3000/api/health
 ```
 
 The health response must contain `"ok":true` and `"authMode":"token"`. A one-shot, networkless `data-init` container fixes ownership of registries created by pre-rootless releases and exits. The long-running Ninjitsi container runs as uid 1000, drops all capabilities, has a read-only root filesystem, and writes only the room registry volume.
@@ -228,7 +240,7 @@ New room codes contain a 96-bit random hexadecimal suffix. Rooms expire after `R
 
 ```bash
 sudo apt install -y debian-keyring debian-archive-keyring \
-  apt-transport-https curl
+  apt-transport-https curl gnupg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
   sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' |
@@ -256,12 +268,12 @@ Caddy obtains trusted certificates and proxies Jitsi's XMPP and Colibri WebSocke
 ### 7. Production verification
 
 ```bash
-curl --fail https://call.example.com/api/health
-curl --fail --head https://jitsi.example.com/config.js
-curl --fail --head https://jitsi.example.com/libs/lib-jitsi-meet.min.js
-curl --silent --head https://call.example.com | \
+curl --fail --show-error https://call.example.com/api/health
+curl --fail --show-error --head https://jitsi.example.com/config.js
+curl --fail --show-error --head https://jitsi.example.com/libs/lib-jitsi-meet.min.js
+curl --fail --silent --show-error --head https://call.example.com | \
   grep -Ei 'strict-transport-security|content-security-policy|permissions-policy|x-content-type-options'
-sudo ss -lntup | grep -E ':(80|443|10000)\b'
+sudo ss -lntup | grep -E ':(80|443|3000|8000|8443|10000)\b'
 sudo docker compose -f /opt/ninjitsi/ninjitsi/compose.yaml \
   --env-file /opt/ninjitsi/ninjitsi/.env exec -T web id
 ```
@@ -278,6 +290,28 @@ Create a password-protected room at `https://call.example.com`. Verify all of th
 6. a forced JVB call remains connected for the required six-hour acceptance period.
 
 Camera, microphone, and screen sharing require trusted HTTPS. If two-person calls work but JVB calls fail, inspect `JVB_ADVERTISE_IPS`, UDP 10000, NAT forwarding, and JVB logs. TURN is required for clients whose networks block UDP.
+
+### Diagnosing `conference.iceFailed`
+
+This error means that the browser could not establish or keep a WebRTC media
+path; it is not a Ninjitsi room timeout. A two-person meeting can use Jitsi P2P
+and therefore does not prove that Videobridge is reachable. Reproduce the issue
+with three participants or with `NINJITSI_FORCE_JVB=1` in the automated media
+test, then inspect the server while the failure is current:
+
+```bash
+sudo ss -lunp | grep ':10000'
+cd /opt/ninjitsi/jitsi
+sudo docker compose ps
+sudo docker compose logs --since=15m prosody jicofo jvb
+```
+
+Check that `JVB_ADVERTISE_IPS` contains the server's public address, that UDP
+10000 reaches that address through every provider firewall and NAT rule, and
+that the JVB container has not restarted or exhausted memory. Test from a
+second physical network, not only from the server or its LAN. If UDP is blocked
+by a client network, deploy and configure TURN over TCP/TLS; opening more HTTP
+ports or increasing room TTL cannot repair an ICE path.
 
 ## Operations
 
@@ -324,7 +358,8 @@ sudo docker run --rm \
   alpine tar -C /data -xzf /backup/ninjitsi-data-YYYY-MM-DD-HHMMSS.tgz
 sudo docker compose run --rm data-init
 sudo docker compose start web
-curl --fail http://127.0.0.1:3000/api/health
+curl --fail --show-error --retry 30 --retry-delay 1 --retry-all-errors \
+  http://127.0.0.1:3000/api/health
 ```
 
 Restoration overwrites `rooms.json` with the archived registry. Keep the current file as a backup before restoring older data. The configuration archive is for disaster recovery: install the same pinned Jitsi release, stop both stacks, restore its paths under `/opt/ninjitsi`, and only then start the services.
@@ -338,9 +373,11 @@ cd /opt/ninjitsi/ninjitsi
 git rev-parse HEAD | tee /opt/ninjitsi/ninjitsi-last-good-revision
 sudo docker image tag ninjitsi-web:latest ninjitsi-web:rollback
 git pull --ff-only
+sudo docker compose config --quiet
 sudo docker compose build
 sudo docker compose up -d
-curl --fail https://call.example.com/api/health
+curl --fail --show-error --retry 30 --retry-delay 1 --retry-all-errors \
+  https://call.example.com/api/health
 ```
 
 If the new application image fails, restore the previous image without rebuilding:
@@ -349,11 +386,16 @@ If the new application image fails, restore the previous image without rebuildin
 cd /opt/ninjitsi/ninjitsi
 sudo docker compose stop web
 sudo docker image tag ninjitsi-web:rollback ninjitsi-web:latest
-sudo docker compose up -d --no-build web
-curl --fail http://127.0.0.1:3000/api/health
+git checkout --detach "$(cat /opt/ninjitsi/ninjitsi-last-good-revision)"
+sudo docker compose config --quiet
+sudo docker compose up -d --no-build
+curl --fail --show-error --retry 30 --retry-delay 1 --retry-all-errors \
+  http://127.0.0.1:3000/api/health
 ```
 
 Restore the room backup as well only when a release changed the stored schema and its release notes explicitly require it.
+After resolving the failed update, return the checkout to the release branch
+with `git switch main` before attempting a later update.
 
 Upgrade Jitsi separately, following the selected release notes and official Docker migration guide. Keep `/opt/ninjitsi/jitsi-config`, the generated service passwords, and the shared JWT secret. Never rotate `JWT_APP_SECRET` on only one side: Jitsi and Ninjitsi must change together during a maintenance window.
 
@@ -431,6 +473,7 @@ Run the real media suite against a reachable Jitsi instance:
 ```bash
 NINJITSI_BASE_URL=http://localhost:3000 \
 NINJITSI_JITSI_URL=http://localhost:8000 \
+NINJITSI_FORCE_JVB=1 \
 npm run smoke:jitsi
 ```
 
@@ -440,9 +483,18 @@ For the required six-hour transport check:
 NINJITSI_STABILITY_MS=21600000 \
 NINJITSI_BASE_URL=https://call.example.com \
 NINJITSI_JITSI_URL=https://jitsi.example.com \
+NINJITSI_FORCE_JVB=1 \
 npm run smoke:jitsi
 ```
 
-The media suite verifies publication and reception of camera/microphone tracks, absence of local audio playback, screen sharing, private chat isolation, replies, attachments, stable grid behavior, per-participant volume, connection statistics, stage mode, device switching, noise suppression, and transport recovery. A production acceptance run still needs real devices on at least two physical networks; a browser on the Docker host cannot prove NAT, firewall, TURN, acoustic, or six-hour Internet behavior.
+`NINJITSI_FORCE_JVB=1` disables P2P in the test clients so the run actually
+exercises the server media path. The media suite verifies token-only admission,
+publication and reception of camera/microphone tracks, absence of local audio
+playback, screen sharing, private chat isolation, replies, attachments, stable
+grid behavior, per-participant volume, connection statistics, stage mode,
+device switching, noise suppression, and transport recovery. A production
+acceptance run still needs real devices on at least two physical networks; a
+browser on the Docker host cannot prove NAT, firewall, TURN, acoustic, or
+six-hour Internet behavior.
 
 Official references: [Jitsi Docker deployment](https://jitsi.github.io/handbook/docs/devops-guide/devops-guide-docker/), [Jitsi token authentication](https://jitsi.github.io/handbook/docs/devops-guide/token-authentication/), [Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/), and [Caddy installation](https://caddyserver.com/docs/install#debian-ubuntu-raspbian).
