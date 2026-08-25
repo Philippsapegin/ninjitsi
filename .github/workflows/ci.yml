@@ -48,7 +48,7 @@ jobs:
       - name: Run browser smoke checks
         shell: bash
         run: |
-          JITSI_AUTH_MODE=open npm start > /tmp/ninjitsi-server.log 2>&1 &
+          JITSI_AUTH_MODE=open node server/server.mjs > /tmp/ninjitsi-server.log 2>&1 &
           server_pid=$!
           cleanup() {
             kill "$server_pid" 2>/dev/null || true
@@ -67,6 +67,7 @@ jobs:
         env:
           JITSI_JWT_SECRET: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           JITSI_URL: https://jitsi.example.test
+          NINJITSI_PORT: 127.0.0.1:3100
         run: |
           cleanup() {
             docker compose logs --no-color || true
@@ -77,10 +78,10 @@ jobs:
           docker compose config --quiet
           docker compose up --detach --build
           curl --fail --retry 30 --retry-delay 1 --retry-connrefused \
-            http://127.0.0.1:3000/api/health
+            http://127.0.0.1:3100/api/health
           test "$(docker compose exec -T web id -u | tr -d '\r')" = "1000"
           test "$(docker inspect ninjitsi-web-1 --format '{{.HostConfig.ReadonlyRootfs}}')" = "true"
           test "$(docker inspect ninjitsi-web-1 --format '{{index .HostConfig.CapDrop 0}}')" = "ALL"
-          test "$(docker compose port web 8080)" = "127.0.0.1:3000"
+          test "$(docker compose port web 8080)" = "127.0.0.1:3100"
           test "$(docker inspect ninjitsi-data-init-1 --format '{{.State.ExitCode}}')" = "0"
           docker compose exec -T web test ! -e /app/.env
