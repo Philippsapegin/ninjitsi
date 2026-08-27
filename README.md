@@ -26,7 +26,294 @@ Internet -> JVB :10000/udp
 
 Ninjitsi and Jitsi share one JWT secret. Ninjitsi issues a short-lived, room-scoped token only after its room API admits the user. Jitsi rejects tokenless connections, so opening the Jitsi domain directly does not bypass a Ninjitsi room password.
 
-## Server installation and launch
+## Add Ninjitsi to an existing Docker Jitsi
+
+Do not uninstall Docker and do not replace the virtual machine. Ninjitsi runs as
+a separate Compose project beside the existing Jitsi project. The Jitsi domain,
+Videobridge, UDP port 10000, and existing reverse proxy remain in place.
+
+The recommended production migration changes Jitsi from open admission to JWT
+admission. Schedule a maintenance window: recreating the Jitsi containers ends
+active meetings, and direct tokenless access to the standard Jitsi UI stops
+working after the cutover.
+
+These steps assume the existing installation uses the official
+`docker-jitsi-meet` Compose project. If Jitsi was installed from Debian packages,
+Kubernetes, or a third-party image, do not copy these environment variables
+blindly; follow that installation's token-authentication procedure instead.
+
+### 1. Inventory the existing installation
+
+Find the directory containing Jitsi's `.env` and `docker-compose.yml`, then run:
+
+```bash
+cd /path/to/existing/docker-jitsi-meet
+sudo docker compose ps
+sudo docker compose config --services
+sudo docker compose images
+grep -E '^(PUBLIC_URL|CONFIG|JITSI_IMAGE_VERSION|XMPP_DOMAIN|ENABLE_AUTH|AUTH_TYPE|ENABLE_GUESTS|JWT_APP_ID|JWT_ALLOW_EMPTY)=' .env
+sudo ss -lunp | grep ':10000'
+```
+
+Record the following before changing anything:
+
+- the absolute Jitsi Compose directory;
+- its release and container image versions;
+- `PUBLIC_URL`, which becomes Ninjitsi's `JITSI_URL`;
+- `XMPP_DOMAIN`, which becomes Ninjitsi's `JITSI_JWT_SUBJECT` and defaults to
+  `meet.jitsi` when absent;
+- the `CONFIG` directory and any additional Compose override files;
+- the current reverse proxy and certificate manager;
+- whether Jitsi already uses JWT, internal, LDAP, or open authentication.
+
+Ninjitsi is tested with `docker-jitsi-meet stable-11146-2`. Do not combine a
+Compose file from one release with images from another. If the existing release
+is materially older, upgrade Jitsi separately according to the official release
+notes, prove an ordinary call still works, and only then start this migration.
+
+If Jitsi already uses JWT for another application, reuse its `JWT_APP_ID`,
+`JWT_APP_SECRET`, accepted audience, and XMPP subject in Ninjitsi. Replacing them
+would invalidate the existing application's tokens. An internal or LDAP setup
+also needs an explicit authentication migration plan; switching `AUTH_TYPE`
+removes that login path.
+
+### 2. Back up Jitsi and prepare rollback
+
+Create a protected backup directory and copy the Compose configuration into it:
+
+```bash
+MIGRATION_BACKUP="/var/backups/ninjitsi-migration-$(date +%F-%H%M%S)"
+sudo install -d -m 0700 "$MIGRATION_BACKUP"
+
+cd /path/to/existing/docker-jitsi-meet
+sudo cp -a .env docker-compose.yml "$MIGRATION_BACKUP"/
+for file in docker-compose.override.yml *.yml; do
+  [ ! -e "$file" ] || sudo cp -a --no-clobber "$file" "$MIGRATION_BACKUP"/
+done
+sudo docker compose images | \
+  sudo tee "$MIGRATION_BACKUP/jitsi-images.txt" >/dev/null
+grep '^CONFIG=' .env
+echo "$MIGRATION_BACKUP"
+```
+
+Back up the absolute directory printed by `CONFIG` as well. It contains generated
+Prosody, Jicofo, JVB, and web state and is installation-specific. For example,
+if `CONFIG=/opt/jitsi-meet-cfg`:
+
+```bash
+sudo tar -C /opt -czf "$MIGRATION_BACKUP/jitsi-meet-cfg.tgz" jitsi-meet-cfg
+```
+
+After creating the admission secret in the next step, copy the resulting backup
+off the virtual machine. It contains service passwords and the admission secret.
+
+### 3. Create or reuse the shared JWT secret
+
+For a previously open Jitsi installation, create a new secret:
+
+```bash
+sudo install -d -m 0755 /opt/ninjitsi
+umask 077
+openssl rand -hex 32 | sudo tee /opt/ninjitsi/jitsi-jwt-secret >/dev/null
+sudo chmod 0600 /opt/ninjitsi/jitsi-jwt-secret
+sudo cp -a /opt/ninjitsi/jitsi-jwt-secret "$MIGRATION_BACKUP"/
+```
+
+If Jitsi already uses JWT, place its existing secret in that file instead; do not
+generate a replacement. Keep the file root-readable only, and refresh the
+off-server backup after copying the secret into it.
+
+### 4. Convert an open Jitsi installation to token-only admission
+
+Skip this step when the existing Jitsi already uses the required JWT settings.
+Open its `.env` with `sudoedit` and set each variable exactly once. Remove or
+update an older occurrence instead of appending duplicate keys.
+
+```dotenv
+ENABLE_AUTH=1
+ENABLE_GUESTS=0
+AUTH_TYPE=jwt
+JWT_APP_ID=ninjitsi
+JWT_APP_SECRET=replace-with-the-value-from-jitsi-jwt-secret
+JWT_ACCEPTED_ISSUERS=ninjitsi
+JWT_ACCEPTED_AUDIENCES=ninjitsi
+JWT_ALLOW_EMPTY=0
+JWT_AUTH_TYPE=token
+JWT_TOKEN_AUTH_MODULE=token_verification
+PROSODY_ENABLE_RATE_LIMITS=1
+```
+
+`JWT_ALLOW_EMPTY=0` is essential: with an empty token allowed, a visitor can
+bypass the Ninjitsi room password by opening the Jitsi domain directly. Validate
+the effective configuration without printing it—the expanded Compose output
+contains secrets—then recreate Jitsi during the maintenance window:
+
+```bash
+cd /path/to/existing/docker-jitsi-meet
+sudo docker compose config --quiet
+sudo docker compose up -d --force-recreate
+sudo docker compose ps
+sudo docker compose logs --tail=100 web prosody jicofo jvb
+```
+
+All core containers must remain running. A direct visit to the Jitsi domain may
+still render its landing page, but joining a room without a valid token must fail.
+
+### 5. Install Ninjitsi as a separate Compose project
+
+```bash
+sudo install -d -m 0755 -o "$USER" -g "$USER" /opt/ninjitsi/app
+git clone https://github.com/Philippsapegin/ninjitsi.git /opt/ninjitsi/app
+cd /opt/ninjitsi/app
+
+JITSI_JWT_SECRET=$(sudo cat /opt/ninjitsi/jitsi-jwt-secret | tr -d '\r\n')
+sudo tee .env >/dev/null <<EOF
+JITSI_URL=https://jitsi.example.com
+NINJITSI_PORT=127.0.0.1:3000
+
+JITSI_AUTH_MODE=token
+JITSI_JWT_APP_ID=ninjitsi
+JITSI_JWT_AUDIENCE=ninjitsi
+JITSI_JWT_SUBJECT=meet.jitsi
+JITSI_JWT_SECRET=${JITSI_JWT_SECRET}
+JITSI_JWT_TTL_SECONDS=43200
+
+MAX_ROOMS=10000
+ROOM_TTL_HOURS=720
+ROOM_CREATE_RATE_LIMIT=10
+ROOM_CREATE_RATE_WINDOW_SECONDS=600
+ROOM_CREATE_GLOBAL_RATE_LIMIT=120
+ROOM_JOIN_RATE_LIMIT=30
+ROOM_JOIN_GLOBAL_RATE_LIMIT=600
+ROOM_PASSWORD_RATE_LIMIT=10
+ROOM_LOOKUP_RATE_LIMIT=120
+SCRYPT_MAX_CONCURRENCY=2
+SCRYPT_MAX_QUEUE=8
+TRUST_PROXY=1
+EOF
+sudo chmod 0600 .env
+
+sudo docker compose config --quiet
+sudo docker compose up -d --build
+sudo docker compose ps
+curl --fail --show-error --retry 30 --retry-delay 1 --retry-all-errors \
+  http://127.0.0.1:3000/api/health
+```
+
+Replace `JITSI_URL` with the existing public Jitsi HTTPS URL. Use the existing
+issuer as `JITSI_JWT_APP_ID`, one of Jitsi's accepted audiences as
+`JITSI_JWT_AUDIENCE`, and the existing `XMPP_DOMAIN` as `JITSI_JWT_SUBJECT`.
+For a previously open installation using the defaults, the shown values are
+correct. The health response must contain `"ok":true` and
+`"authMode":"token"`.
+
+Ninjitsi does not need to join the Jitsi Docker network: clients load
+`lib-jitsi-meet` and establish XMPP/media connections through Jitsi's existing
+public HTTPS domain. Keep port 3000 bound to `127.0.0.1`; do not publish it
+directly to the Internet.
+
+### 6. Add the Ninjitsi hostname to the existing reverse proxy
+
+Create a DNS `A` record such as `call.example.com` for the same virtual machine.
+Leave the working Jitsi proxy configuration untouched and add one virtual host
+that forwards the new hostname to `127.0.0.1:3000`.
+
+For Caddy, merge this block into the existing Caddyfile:
+
+```caddyfile
+call.example.com {
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        -Server
+    }
+    reverse_proxy 127.0.0.1:3000 {
+        stream_close_delay 5m
+    }
+}
+```
+
+Then run `sudo caddy validate --config /etc/caddy/Caddyfile` and reload Caddy.
+For Nginx, add an equivalent HTTPS server through the installation's existing
+certificate workflow:
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name call.example.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+Validate with `sudo nginx -t` before reloading. Do not replace the existing Jitsi
+WebSocket locations or its UDP 10000 routing; Ninjitsi depends on those paths.
+
+### 7. Verify the migrated installation
+
+```bash
+curl --fail --show-error https://call.example.com/api/health
+curl --fail --show-error --head https://jitsi.example.com/config.js
+curl --fail --show-error --head \
+  https://jitsi.example.com/libs/lib-jitsi-meet.min.js
+sudo ss -lntup | grep -E ':(80|443|3000|10000)\b'
+```
+
+Create a password-protected room through Ninjitsi and test with a second computer
+on another network. Confirm audio, video, screen sharing, chat, reconnect, and
+three-participant media. Also confirm that the same Jitsi room cannot be joined
+directly without a token. The forced-JVB test under **Technical checks** proves
+that a passing two-person P2P call is not hiding a broken Videobridge route.
+
+### Temporary compatibility test without changing Jitsi authentication
+
+To evaluate the UI before scheduling the JWT cutover, Ninjitsi can temporarily
+use an existing open Jitsi. In Ninjitsi's `.env`, set:
+
+```dotenv
+JITSI_AUTH_MODE=open
+JITSI_JWT_SECRET=an-unused-random-secret-required-by-the-compose-model
+```
+
+Restart Ninjitsi with `sudo docker compose up -d`. This mode is not a secure
+production deployment: Ninjitsi room passwords protect only the Ninjitsi entry
+page, while anyone who knows the room name can bypass it through the ordinary
+Jitsi interface. Finish the JWT migration before inviting users.
+
+### Roll back the migration
+
+Stop Ninjitsi, restore the backed-up Jitsi `.env`, Compose overrides, and
+`CONFIG` directory, then recreate the original Jitsi stack using the image
+versions recorded during inventory:
+
+```bash
+cd /opt/ninjitsi/app
+sudo docker compose down
+
+cd /path/to/existing/docker-jitsi-meet
+# Restore the saved files from $MIGRATION_BACKUP before continuing.
+sudo docker compose config --quiet
+sudo docker compose up -d --force-recreate
+sudo docker compose ps
+```
+
+Finally remove or disable only the `call.example.com` reverse-proxy block. Do not
+delete the existing Jitsi volumes, configuration directory, or Docker Engine.
+
+## Fresh server installation and launch
 
 Replace these examples throughout the instructions:
 
