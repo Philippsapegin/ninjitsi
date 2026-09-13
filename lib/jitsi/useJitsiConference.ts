@@ -378,8 +378,8 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
     normalized.includes("denied")
   ) {
     return ui(
-      `Chrome does not have permission to use the ${target}. Allow access in the address bar.`,
-      `Нет разрешения на ${target}. Разрешите доступ в адресной строке Chrome.`,
+      `The browser does not have permission to use the ${target}. Allow access in the address bar.`,
+      `Браузеру не разрешён доступ к ${target}. Разрешите его в адресной строке.`,
     );
   }
 
@@ -423,10 +423,18 @@ async function createLocalTrack(
   device: LocalMediaDevice,
   deviceId = "",
 ) {
+  // Chromium accepts "default" as a synthetic device id and needs it to
+  // reliably follow the operating-system microphone. Firefox selects the
+  // microphone in its permission prompt and may reject that synthetic id
+  // before getUserMedia is called, leaving the user with no prompt at all.
+  const defaultMicrophoneId = /\bFirefox\//.test(navigator.userAgent)
+    ? ""
+    : "default";
+  const microphoneId = deviceId || defaultMicrophoneId;
   const tracks = await library.createLocalTracks({
     devices: [device],
-    ...(device === "audio"
-      ? { micDeviceId: deviceId || "default" }
+    ...(device === "audio" && microphoneId
+      ? { micDeviceId: microphoneId }
       : {}),
     ...(device === "video" && deviceId ? { cameraDeviceId: deviceId } : {}),
     ...(device === "video" ? { resolution: 720 } : {}),
