@@ -4,8 +4,33 @@ import { I18nProvider } from "@/lib/i18n";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ninjitsi — simple Jitsi meetings",
-  description: "A desktop-first video meeting client built on Jitsi.",
+  metadataBase: new URL("https://nin.caerwydyr.ru"),
+  title: "Ninjitsi simple calls",
+  description: "Simple desktop video calls powered by Jitsi.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: "Ninjitsi",
+    title: "Ninjitsi simple calls",
+    description: "Simple desktop video calls powered by Jitsi.",
+    images: [
+      {
+        url: "/ninjitsi-social.png",
+        width: 1200,
+        height: 630,
+        alt: "Ninjitsi",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Ninjitsi simple calls",
+    description: "Simple desktop video calls powered by Jitsi.",
+    images: ["/ninjitsi-social.png"],
+  },
 };
 
 export default function RootLayout({

@@ -1,0 +1,15 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#0B0E0A"/>
+  <circle cx="600" cy="262" r="196" fill="#D8FF63" fill-opacity="0.045"/>
+  <g transform="translate(520 116) scale(2.5)">
+    <path d="M44 0H20C8.9543 0 0 8.9543 0 20V44C0 55.0457 8.9543 64 20 64H44C55.0457 64 64 55.0457 64 44V20C64 8.9543 55.0457 0 44 0Z" fill="#D8FF63"/>
+    <path d="M26.9707 25.2028L48.5374 16.364L28.3849 36.5165L26.9707 25.2028Z" fill="#11140B" stroke="#11140B" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M39.6986 37.9308L48.5374 16.3641L28.3849 36.5166L39.6986 37.9308Z" stroke="#11140B" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M23.4349 41.4664L29.0918 35.8096" stroke="#11140B" stroke-width="6" stroke-linejoin="round"/>
+    <circle cx="19.8994" cy="45.0017" r="5" transform="rotate(45 19.8994 45.0017)" stroke="#11140B" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M20 23C22.2091 23 24 21.2091 24 19C24 16.7909 22.2091 15 20 15C17.7909 15 16 16.7909 16 19C16 21.2091 17.7909 23 20 23Z" fill="#11140B"/>
+    <path d="M45 49C47.2091 49 49 47.2091 49 45C49 42.7909 47.2091 41 45 41C42.7909 41 41 42.7909 41 45C41 47.2091 42.7909 49 45 49Z" fill="#11140B"/>
+  </g>
+  <text x="600" y="365" text-anchor="middle" fill="#F4F6EF" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700" letter-spacing="-2">Ninjitsi</text>
+  <text x="600" y="426" text-anchor="middle" fill="#A9AEA2" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="400">simple calls</text>
+</svg>
