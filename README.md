@@ -456,7 +456,24 @@ JWT_ACCEPTED_AUDIENCES=ninjitsi
 JWT_ALLOW_EMPTY=0
 JWT_AUTH_TYPE=token
 JWT_TOKEN_AUTH_MODULE=token_verification
+
+# Keep abuse protection without throttling normal WebRTC renegotiation. The
+# Docker proxy range must not be treated as one external client IP.
 PROSODY_ENABLE_RATE_LIMITS=1
+PROSODY_RATE_LIMIT_SESSION_RATE=10000
+PROSODY_RATE_LIMIT_TIMEOUT=10
+PROSODY_RATE_LIMIT_ALLOW_RANGES=10.0.0.0/8,127.0.0.1,172.16.0.0/12
+
+# Conservative desktop baseline. It avoids codec switches during camera and
+# screen-share replacement; enable other codecs later only after a media test.
+CODEC_ORDER_JVB=["VP8"]
+CODEC_ORDER_JVB_MOBILE=["VP8"]
+CODEC_ORDER_P2P=["VP8"]
+CODEC_ORDER_P2P_MOBILE=["VP8"]
+ENABLE_CODEC_VP8=1
+ENABLE_CODEC_VP9=0
+ENABLE_CODEC_AV1=0
+ENABLE_CODEC_H264=0
 EOF
 
 cp /opt/ninjitsi/ninjitsi/deploy/jitsi-compose.override.yml \
@@ -577,6 +594,13 @@ Create a password-protected room at `https://call.example.com`. Verify all of th
 6. a forced JVB call remains connected for the required six-hour acceptance period.
 
 Camera, microphone, and screen sharing require trusted HTTPS. If two-person calls work but JVB calls fail, inspect `JVB_ADVERTISE_IPS`, UDP 10000, NAT forwarding, and JVB logs. TURN is required for clients whose networks block UDP.
+
+If browser logs contain a `Jingle IQ` timeout, check Prosody for `rate exceeded`
+or `throttling session` at the same timestamp. The production values above
+retain per-session abuse protection while allowing the larger signaling bursts
+caused by adding, replacing, and removing camera or screen-share tracks. Do not
+leave the Docker proxy subnet under the aggregate per-IP limiter: every browser
+would otherwise appear to Prosody as the same proxy address.
 
 ### Diagnosing `conference.iceFailed`
 
