@@ -933,6 +933,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const localVideoBackgroundDataRef = useRef("");
   const localVideoBackgroundRevisionRef = useRef("");
   const videoBackgroundEnabledRef = useRef(false);
+  const videoBackgroundChannelOpenRef = useRef(false);
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const desktopRemovalRef = useRef(new WeakSet<JitsiTrackLike>());
@@ -1250,6 +1251,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
           ? options.videoBackgroundRevision.slice(0, 180)
           : "";
       setVideoBackgroundAvailable(Boolean(options.videoBackgroundDataUrl));
+      videoBackgroundChannelOpenRef.current = false;
       if (!isRecovery) {
         videoBackgroundEnabledRef.current = false;
         setVideoBackgroundEnabledState(false);
@@ -1419,9 +1421,22 @@ export function useJitsiConference(roomName: string): ConferenceController {
             const publishVideoBackground = async (participantId = "") => {
               if (
                 conferenceRef.current !== conference ||
+                !videoBackgroundChannelOpenRef.current ||
                 !videoBackgroundEnabledRef.current ||
                 !localVideoBackgroundDataRef.current ||
                 !localVideoBackgroundRevisionRef.current
+              ) {
+                return;
+              }
+
+              const remoteParticipants = conference.getParticipants();
+
+              if (
+                (!participantId && remoteParticipants.length === 0) ||
+                (participantId &&
+                  !remoteParticipants.some(
+                    (participant) => participant.getId() === participantId,
+                  ))
               ) {
                 return;
               }
@@ -1508,7 +1523,19 @@ export function useJitsiConference(roomName: string): ConferenceController {
             }
             if (conferenceEvents.DATA_CHANNEL_OPENED) {
               conference.on(conferenceEvents.DATA_CHANNEL_OPENED, () => {
+                if (conferenceRef.current !== conference) {
+                  return;
+                }
+                videoBackgroundChannelOpenRef.current = true;
                 void publishVideoBackground();
+              });
+            }
+            if (conferenceEvents.DATA_CHANNEL_CLOSED) {
+              conference.on(conferenceEvents.DATA_CHANNEL_CLOSED, () => {
+                if (conferenceRef.current !== conference) {
+                  return;
+                }
+                videoBackgroundChannelOpenRef.current = false;
               });
             }
             if (conferenceEvents.USER_LEFT) {
@@ -1820,18 +1847,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
                       }
 
                       const dataUrl = transfer.chunks.join("");
-                      const sender = conference
-                        .getParticipants()
-                        .find(
-                          (participant) =>
-                            participant.getId() === senderId,
-                        );
-                      const currentRevision = sender?.getProperty?.(
-                        VIDEO_BACKGROUND_REVISION_PROPERTY,
-                      );
 
                       if (
-                        currentRevision !== transfer.revision ||
                         dataUrl.length > MAX_VIDEO_BACKGROUND_DATA_LENGTH ||
                         !/^data:image\/(?:gif|jpeg|png);base64,/i.test(dataUrl)
                       ) {
@@ -2738,19 +2755,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
       if (
         enabled &&
+        videoBackgroundChannelOpenRef.current &&
+        conference.getParticipants().length > 0 &&
         !(await sendVideoBackground(
           conference,
           localVideoBackgroundDataRef.current,
           localVideoBackgroundRevisionRef.current,
         ))
       ) {
-        videoBackgroundEnabledRef.current = false;
-        setVideoBackgroundEnabledState(false);
-        conference.setLocalParticipantProperty?.(
-          VIDEO_BACKGROUND_ENABLED_PROPERTY,
-          "false",
-        );
-        syncParticipants();
         setError(
           ui(
             "The video background could not be sent to the meeting.",
@@ -3063,6 +3075,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     localVideoBackgroundDataRef.current = "";
     localVideoBackgroundRevisionRef.current = "";
     videoBackgroundEnabledRef.current = false;
+    videoBackgroundChannelOpenRef.current = false;
     setVideoBackgroundAvailable(false);
     setVideoBackgroundEnabledState(false);
     setLocalAudioLevel(0);

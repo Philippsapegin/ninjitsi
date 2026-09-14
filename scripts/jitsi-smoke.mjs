@@ -386,6 +386,41 @@ try {
     { timeout: 15_000 },
   );
 
+  await page.getByRole("button", { name: "Настройки" }).click();
+  const soloSettingsDialog = page.getByRole("dialog", {
+    name: "Настройки устройств",
+  });
+  const soloProfileBackground = soloSettingsDialog.getByRole("switch", {
+    name: "Фон профиля",
+  });
+
+  await soloProfileBackground.waitFor();
+  await soloProfileBackground.click();
+  if ((await soloProfileBackground.getAttribute("aria-checked")) !== "true") {
+    throw new Error("Видеофон не включился в комнате без других участников");
+  }
+  if (
+    (await page.getByText(
+      "Не удалось отправить видеофон участникам встречи.",
+      { exact: true },
+    ).count()) > 0
+  ) {
+    throw new Error("Пустая комната ошибочно потребовала отправить видеофон");
+  }
+  await soloSettingsDialog
+    .getByRole("button", { name: "Закрыть настройки" })
+    .click();
+  await page
+    .getByRole("button", { name: "Выключить камеру" })
+    .click();
+  await page.locator("[data-video-background]").waitFor({ timeout: 30_000 });
+  await page
+    .getByRole("button", { name: "Включить камеру" })
+    .click();
+  await page
+    .getByRole("button", { name: "Выключить камеру" })
+    .waitFor({ timeout: 30_000 });
+
   const observerPage = await context.newPage();
 
   await observerPage.addInitScript(installSoundProbe);
@@ -960,9 +995,8 @@ try {
   });
 
   await profileBackground.waitFor();
-  await profileBackground.click();
   if ((await profileBackground.getAttribute("aria-checked")) !== "true") {
-    throw new Error("Фон профиля не включился");
+    throw new Error("Фон профиля выключился после подключения участника");
   }
 
   await settingsDialog
@@ -1145,7 +1179,7 @@ try {
           camera: "toggle passed",
           avatarPropagation: "passed",
           profileBackground:
-            "IndexedDB persistence and data-channel propagation passed",
+            "solo display, IndexedDB persistence and late-participant propagation passed",
           profileTileColor: "custom HEX propagation passed",
           attachments: "ephemeral drag-and-drop passed",
           imagePreview: "clickable transparent PNG passed",
