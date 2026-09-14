@@ -111,6 +111,9 @@ export interface ParticipantView {
   isLocal: boolean;
   isModerator: boolean;
   isScreenSharing: boolean;
+  tileColor: string;
+  videoBackgroundEnabled: boolean;
+  videoBackgroundUrl?: string;
   videoMuted: boolean;
   videoTrack?: JitsiTrackLike;
 }

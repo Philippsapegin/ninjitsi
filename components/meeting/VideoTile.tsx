@@ -42,6 +42,23 @@ function participantGradient(id: string) {
   return `radial-gradient(circle at 50% 34%, ${start}, ${end} 78%)`;
 }
 
+function tileColorGradient(color: string, participantId: string) {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+
+  if (!match) {
+    return participantGradient(participantId);
+  }
+
+  const channels = match.slice(1).map((channel) => Number.parseInt(channel, 16));
+  const light = channels.map((channel) =>
+    Math.round(channel + (255 - channel) * 0.2),
+  );
+  const dark = channels.map((channel) => Math.round(channel * 0.42));
+  const rgb = (values: number[]) => `rgb(${values.join(", ")})`;
+
+  return `radial-gradient(circle at 50% 34%, ${rgb(light)}, ${rgb(dark)} 78%)`;
+}
+
 function initials(name: string) {
   return name
     .split(/\s+/)
@@ -88,7 +105,12 @@ export function VideoTile({
     <article
       className={styles.tile}
       data-video-tile
-      style={{ background: participantGradient(participant.id) }}
+      style={{
+        background: tileColorGradient(
+          participant.tileColor,
+          participant.id,
+        ),
+      }}
     >
       {hasVisibleVideo ? (
         <div
@@ -101,6 +123,15 @@ export function VideoTile({
             track={participant.videoTrack!}
           />
         </div>
+      ) : participant.videoBackgroundEnabled &&
+        participant.videoBackgroundUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          alt=""
+          className={styles.videoBackground}
+          data-video-background
+          src={participant.videoBackgroundUrl}
+        />
       ) : (
         <div className={styles.avatar} aria-hidden="true">
           {participant.avatarUrl ? (

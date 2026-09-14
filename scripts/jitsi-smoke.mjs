@@ -306,6 +306,41 @@ try {
   await page
     .getByRole("button", { name: "Сменить аватарку" })
     .waitFor();
+  await page.getByRole("button", { name: "Цвет плитки" }).click();
+  await page.getByLabel("HEX-цвет плитки").fill("#326E72");
+  await page.getByLabel("HEX-цвет плитки").press("Enter");
+  await page.getByRole("button", { name: "Добавить видеофон" }).click();
+  const backgroundDataUrl = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+
+    canvas.width = 640;
+    canvas.height = 360;
+    const context = canvas.getContext("2d");
+
+    const pixels = context.createImageData(640, 360);
+    let seed = 0x326e72;
+
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      pixels.data[index] = seed & 255;
+      pixels.data[index + 1] = (seed >>> 8) & 255;
+      pixels.data[index + 2] = (seed >>> 16) & 255;
+      pixels.data[index + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    return canvas.toDataURL("image/png");
+  });
+
+  await page.locator('input[accept*=".jpg"]').setInputFiles({
+    buffer: Buffer.from(backgroundDataUrl.split(",")[1], "base64"),
+    mimeType: "image/png",
+    name: "video-background.png",
+  });
+  await page
+    .getByRole("dialog", { name: "Видеофон" })
+    .locator("img")
+    .waitFor();
+  await page.getByRole("button", { name: "Закрыть" }).click();
   await page.getByRole("button", { name: "Войти в комнату" }).click();
   await page
     .getByRole("button", { name: "Завершить звонок" })
@@ -390,6 +425,18 @@ try {
     .filter({ hasText: "Ninjitsi Smoke" });
 
   await remoteTile.locator("video").waitFor({ timeout: 30_000 });
+  const propagatedTileBackground = await remoteTile.evaluate(
+    (tile) => getComputedStyle(tile).backgroundImage,
+  );
+
+  if (
+    !propagatedTileBackground.includes("91, 139, 142") ||
+    !propagatedTileBackground.includes("21, 46, 48")
+  ) {
+    throw new Error(
+      `Цвет профиля не передался удалённой плитке: ${propagatedTileBackground}`,
+    );
+  }
   await observerPage.locator("audio").first().waitFor({
     state: "attached",
     timeout: 30_000,
@@ -906,6 +953,16 @@ try {
     }
   }
 
+  const profileBackground = settingsDialog.getByRole("switch", {
+    name: "Фон профиля",
+  });
+
+  await profileBackground.waitFor();
+  await profileBackground.click();
+  if ((await profileBackground.getAttribute("aria-checked")) !== "true") {
+    throw new Error("Фон профиля не включился");
+  }
+
   await settingsDialog
     .getByRole("button", { name: "Закрыть настройки" })
     .click();
@@ -939,7 +996,18 @@ try {
     state: "hidden",
     timeout: 30_000,
   });
-  await remoteTile.locator("img").waitFor({ timeout: 30_000 });
+  const remoteVideoBackground = remoteTile.locator(
+    "[data-video-background]",
+  );
+
+  await remoteVideoBackground.waitFor({ timeout: 30_000 });
+  if (
+    !(await remoteVideoBackground.getAttribute("src"))?.startsWith(
+      "data:image/png",
+    )
+  ) {
+    throw new Error("Удалённый видеофон повреждён или сменил формат");
+  }
   await page
     .getByRole("button", { name: "Включить камеру" })
     .click();
@@ -947,6 +1015,7 @@ try {
     .getByRole("button", { name: "Выключить камеру" })
     .waitFor();
   await remoteTile.locator("video").waitFor({ timeout: 30_000 });
+  await remoteVideoBackground.waitFor({ state: "hidden", timeout: 30_000 });
 
   await page
     .getByRole("button", { name: "Показать экран" })
@@ -1073,6 +1142,9 @@ try {
         media: {
           camera: "toggle passed",
           avatarPropagation: "passed",
+          profileBackground:
+            "IndexedDB persistence and data-channel propagation passed",
+          profileTileColor: "custom HEX propagation passed",
           attachments: "ephemeral drag-and-drop passed",
           imagePreview: "clickable transparent PNG passed",
           chat: "bidirectional transport and reply quoting passed",

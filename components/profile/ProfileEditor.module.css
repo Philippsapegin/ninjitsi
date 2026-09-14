@@ -91,10 +91,18 @@
 }
 
 .saved img,
-.avatarButton img {
+.savedProfile > button:first-child > span,
+.avatarButton img,
+.avatarButton > span {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.savedProfile > button:first-child > span,
+.avatarButton > span {
+  display: grid;
+  place-items: center;
 }
 
 .profileFields {
@@ -102,6 +110,12 @@
   grid-template-columns: 52px minmax(0, 1fr);
   gap: 11px;
   align-items: end;
+}
+
+.avatarCluster {
+  position: relative;
+  width: 52px;
+  height: 52px;
 }
 
 .avatarButton {
@@ -128,6 +142,10 @@
   border-radius: 50%;
 }
 
+.avatarButton > span {
+  border-radius: 50%;
+}
+
 .avatarButton i {
   position: absolute;
   right: -2px;
@@ -140,6 +158,129 @@
   background: var(--accent);
   border: 0;
   border-radius: 50%;
+}
+
+.appearanceButton {
+  position: absolute;
+  z-index: 4;
+  right: -2px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  place-items: center;
+  color: #f5f7f2;
+  background: var(--profile-color, #485d78);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.36);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    filter 140ms ease,
+    transform 140ms ease;
+}
+
+.appearanceButton:hover,
+.appearanceButton[aria-expanded="true"] {
+  filter: brightness(1.14);
+  transform: scale(1.06);
+}
+
+.backgroundButton {
+  top: 16px;
+  color: var(--text-soft);
+  background: #343b43;
+}
+
+.backgroundButton.assetPresent {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.colorPicker {
+  position: absolute;
+  z-index: 7;
+  top: -2px;
+  right: -2px;
+  width: 20px;
+  height: 20px;
+}
+
+.colorPicker > .appearanceButton {
+  top: 0;
+  right: 0;
+}
+
+.colorPopover {
+  position: absolute;
+  z-index: 12;
+  top: -8px;
+  left: 29px;
+  display: flex;
+  width: 218px;
+  padding: 12px;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text);
+  background: rgba(22, 27, 33, 0.99);
+  border: 0;
+  border-radius: 11px;
+  box-shadow: 0 18px 52px rgba(0, 0, 0, 0.54);
+  backdrop-filter: blur(18px);
+}
+
+.colorPopover > strong {
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.colorPresets {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+}
+
+.colorPresets > button {
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.colorPresets > button[aria-pressed="true"] {
+  outline-color: var(--accent);
+}
+
+.colorPopover > label {
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.colorPopover > label > span {
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 720;
+}
+
+.colorPopover input {
+  width: 100%;
+  height: 31px;
+  padding: 0 9px;
+  outline: none;
+  color: var(--text);
+  background: #0c0f13;
+  border: 0;
+  border-radius: 7px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
 .nameField {
@@ -181,4 +322,172 @@
 .error {
   color: #ffaaa4;
   font-size: 10px;
+}
+
+.backgroundBackdrop {
+  position: fixed;
+  z-index: 200;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  inset: 0;
+  background: rgba(3, 5, 7, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.backgroundDialog {
+  display: flex;
+  width: min(520px, calc(100vw - 48px));
+  padding: 18px;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text);
+  background: #151a20;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.64);
+}
+
+.backgroundDialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.backgroundDialog > header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.backgroundDialog > header strong {
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.backgroundDialog > header span {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.backgroundDialog > header button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.backgroundDialog > header button:hover {
+  color: var(--accent);
+  background: var(--surface-soft);
+}
+
+.backgroundDropzone {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  width: 100%;
+  padding: 0;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  color: var(--text-soft);
+  background: #0b0e12;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.backgroundDropzone.dragActive {
+  background: rgba(216, 255, 99, 0.08);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.backgroundDropzone:disabled {
+  cursor: wait;
+}
+
+.backgroundDropzone > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.backgroundDropzone > div {
+  display: flex;
+  padding: 26px;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.backgroundDropzone > div > svg {
+  margin-bottom: 3px;
+  color: var(--accent);
+}
+
+.backgroundDropzone > div strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.backgroundDropzone > div span {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.replaceHint {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 6px 8px;
+  color: var(--text);
+  background: rgba(6, 8, 11, 0.78);
+  border-radius: 6px;
+  font-size: 8px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.backgroundDropzone:hover .replaceHint {
+  opacity: 1;
+}
+
+.backgroundMeta {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backgroundMeta > span {
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+.backgroundMeta > button {
+  display: inline-flex;
+  padding: 3px 0;
+  align-items: center;
+  gap: 5px;
+  color: #ffaaa4;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.backgroundMeta > button:hover {
+  color: #ffc4bf;
 }

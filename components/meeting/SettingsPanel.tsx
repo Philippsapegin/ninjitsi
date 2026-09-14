@@ -5,6 +5,7 @@ import {
   Camera,
   Check,
   ChevronDown,
+  ImageIcon,
   Languages,
   LockKeyhole,
   Mic,
@@ -23,7 +24,10 @@ interface SettingsPanelProps {
   onAudioInputChange: (deviceId: string) => Promise<void>;
   onNoiseSuppressionChange: (enabled: boolean) => Promise<void>;
   onVideoInputChange: (deviceId: string) => Promise<void>;
+  onVideoBackgroundChange: (enabled: boolean) => Promise<void>;
   roomPassword: string | null;
+  videoBackgroundAvailable: boolean;
+  videoBackgroundEnabled: boolean;
   videoInputId: string;
 }
 
@@ -43,7 +47,10 @@ export function SettingsPanel({
   onAudioInputChange,
   onNoiseSuppressionChange,
   onVideoInputChange,
+  onVideoBackgroundChange,
   roomPassword,
+  videoBackgroundAvailable,
+  videoBackgroundEnabled,
   videoInputId,
 }: SettingsPanelProps) {
   const { locale, setLocale, tr } = useI18n();
@@ -214,6 +221,38 @@ export function SettingsPanel({
               <i>{noiseSuppressionEnabled && <Check size={11} />}</i>
             </button>
           </div>
+
+          {videoBackgroundAvailable && (
+            <div className={styles.toggleRow}>
+              <span className={styles.toggleIcon}>
+                <ImageIcon size={15} />
+              </span>
+              <div>
+                <strong>
+                  {tr("Profile background", "Фон профиля")}
+                </strong>
+                <small>
+                  {tr(
+                    "Shown while your camera is off",
+                    "Показывается, пока камера выключена",
+                  )}
+                </small>
+              </div>
+              <button
+                aria-checked={videoBackgroundEnabled}
+                aria-label={tr("Profile background", "Фон профиля")}
+                className={videoBackgroundEnabled ? styles.toggleOn : ""}
+                disabled={busy}
+                onClick={() =>
+                  void onVideoBackgroundChange(!videoBackgroundEnabled)
+                }
+                role="switch"
+                type="button"
+              >
+                <i>{videoBackgroundEnabled && <Check size={11} />}</i>
+              </button>
+            </div>
+          )}
 
           <div className={styles.languageRow}>
             <span className={styles.toggleIcon}>

@@ -20,7 +20,10 @@ import {
 import { Brand } from "@/components/brand/Brand";
 import { ProfileEditor } from "@/components/profile/ProfileEditor";
 import { useI18n } from "@/lib/i18n";
-import { saveClientProfile } from "@/lib/profiles";
+import {
+  DEFAULT_PROFILE_TILE_COLOR,
+  saveClientProfile,
+} from "@/lib/profiles";
 import type { ProfileDraft } from "@/lib/profiles";
 import {
   normalizeRoomName,
@@ -41,6 +44,9 @@ export function LandingPage() {
     avatarDataUrl: "",
     displayName: "",
     profileId: "",
+    tileColor: DEFAULT_PROFILE_TILE_COLOR,
+    videoBackgroundDataUrl: "",
+    videoBackgroundRevision: "",
   });
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -79,7 +85,7 @@ export function LandingPage() {
       } else {
         targetRoom = (await getRoom(normalizedRoom)).code;
       }
-      const savedProfile = saveClientProfile(profile);
+      const savedProfile = await saveClientProfile(profile);
 
       savePendingJoin({
         avatarDataUrl: savedProfile.avatarDataUrl,
@@ -89,6 +95,8 @@ export function LandingPage() {
         profileId: savedProfile.id,
         startAudioMuted: false,
         startVideoMuted: false,
+        tileColor: savedProfile.tileColor,
+        videoBackgroundRevision: savedProfile.videoBackgroundRevision,
       });
 
       router.push(`/room/${encodeURIComponent(targetRoom)}`);
@@ -96,6 +104,8 @@ export function LandingPage() {
       setError(
         caughtError instanceof RoomApiError
           ? caughtError.message
+          : caughtError instanceof Error && caughtError.message
+            ? caughtError.message
           : tr(
               "Could not reach the room server.",
               "Не удалось связаться с сервером комнат.",

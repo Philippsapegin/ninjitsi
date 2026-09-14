@@ -41,35 +41,57 @@ export function JoinOverlay({
     avatarDataUrl: initialDetails.avatarDataUrl,
     displayName: initialDetails.displayName,
     profileId: initialDetails.profileId,
+    tileColor: initialDetails.tileColor,
+    videoBackgroundDataUrl:
+      initialDetails.videoBackgroundDataUrl || undefined,
+    videoBackgroundRevision: initialDetails.videoBackgroundRevision,
   });
   const [password, setPassword] = useState(initialDetails.password);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
   const [startAudioMuted, setStartAudioMuted] = useState(
     initialDetails.startAudioMuted,
   );
   const [startVideoMuted, setStartVideoMuted] = useState(
     initialDetails.startVideoMuted,
   );
-  const isBusy = status === "loading" || status === "connecting";
+  const isBusy =
+    status === "loading" || status === "connecting" || profileSaving;
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!profile.displayName.trim() || isBusy) {
       return;
     }
 
-    const savedProfile = saveClientProfile(profile);
+    setProfileError("");
+    setProfileSaving(true);
+    try {
+      const savedProfile = await saveClientProfile(profile);
 
-    void onJoin({
-      avatarDataUrl: savedProfile.avatarDataUrl,
-      displayName: savedProfile.displayName,
-      isCreator: initialDetails.isCreator,
-      password,
-      profileId: savedProfile.id,
-      startAudioMuted,
-      startVideoMuted,
-    });
+      await onJoin({
+        avatarDataUrl: savedProfile.avatarDataUrl,
+        displayName: savedProfile.displayName,
+        isCreator: initialDetails.isCreator,
+        password,
+        profileId: savedProfile.id,
+        startAudioMuted,
+        startVideoMuted,
+        tileColor: savedProfile.tileColor,
+        videoBackgroundDataUrl: savedProfile.videoBackgroundDataUrl,
+        videoBackgroundRevision: savedProfile.videoBackgroundRevision,
+      });
+    } catch (caughtError) {
+      setProfileError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : tr("Could not save the profile", "Не удалось сохранить профиль"),
+      );
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   return (
@@ -115,7 +137,7 @@ export function JoinOverlay({
             </span>
           </div>
         ) : (
-          <form onSubmit={submit}>
+          <form onSubmit={(event) => void submit(event)}>
             <ProfileEditor autoFocus onChange={setProfile} value={profile} />
 
             <label className={styles.field}>
@@ -188,7 +210,9 @@ export function JoinOverlay({
               </button>
             </div>
 
-            {error && <div className={styles.error}>{error}</div>}
+            {(profileError || error) && (
+              <div className={styles.error}>{profileError || error}</div>
+            )}
 
             <button
               className={styles.joinButton}

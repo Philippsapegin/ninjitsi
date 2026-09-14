@@ -721,11 +721,11 @@ Nothing is installed on the client computer.
 5. A guest opens the link, selects a profile, enters the password, and selects **Join room**.
 6. On first use, the guest allows camera and microphone access. Screen sharing opens the browser/system picker.
 
-Profiles and avatars remain in that browser's local storage. A server-issued Jitsi token remains only in the active page and expires after twelve hours by default.
+Profiles and avatars remain in that browser's local storage; optional camera-off backgrounds are kept in its IndexedDB. A server-issued Jitsi token remains only in the active page and expires after twelve hours by default.
 
 ## Features
 
-- **Local profiles:** reusable names and avatars stored in the client's browser.
+- **Local profiles:** reusable names, avatars, tile colors, and optional 16:9 camera-off backgrounds stored in the client's browser. Backgrounds accept JPG, PNG, or GIF files up to 3 MB.
 - **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage.
 - **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API.
 - **Private messages and replies:** text and attachments can target selected participants; private replies retain their recipient set.

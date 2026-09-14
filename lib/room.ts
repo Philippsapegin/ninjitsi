@@ -1,3 +1,5 @@
+import { normalizeProfileTileColor } from "./profiles";
+
 export interface PendingJoinDetails {
   avatarDataUrl: string;
   displayName: string;
@@ -6,6 +8,8 @@ export interface PendingJoinDetails {
   profileId: string;
   startAudioMuted: boolean;
   startVideoMuted: boolean;
+  tileColor: string;
+  videoBackgroundRevision: string;
 }
 
 const PENDING_JOIN_KEY = "ninjitsi.pendingJoin";
@@ -76,6 +80,11 @@ export function readPendingJoin(): PendingJoinDetails | null {
       profileId: typeof parsed.profileId === "string" ? parsed.profileId : "",
       startAudioMuted: Boolean(parsed.startAudioMuted),
       startVideoMuted: Boolean(parsed.startVideoMuted),
+      tileColor: normalizeProfileTileColor(parsed.tileColor),
+      videoBackgroundRevision:
+        typeof parsed.videoBackgroundRevision === "string"
+          ? parsed.videoBackgroundRevision.slice(0, 180)
+          : "",
     };
   } catch {
     sessionStorage.removeItem(PENDING_JOIN_KEY);

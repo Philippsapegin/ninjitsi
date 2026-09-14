@@ -24,6 +24,7 @@ import {
 import { authorizeRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import { useRoomApiEnabled } from "@/lib/runtimeConfig";
 import { playNinjitsiSound } from "@/lib/sounds";
+import { DEFAULT_PROFILE_TILE_COLOR } from "@/lib/profiles";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
 import { ChatSidebar } from "./ChatSidebar";
@@ -41,6 +42,9 @@ const EMPTY_JOIN_DETAILS: JoinOptions = {
   profileId: "",
   startAudioMuted: false,
   startVideoMuted: false,
+  tileColor: DEFAULT_PROFILE_TILE_COLOR,
+  videoBackgroundDataUrl: "",
+  videoBackgroundRevision: "",
 };
 
 interface MeetingRoomProps {
@@ -197,11 +201,13 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       const creatorPassword = readCreatedRoomPassword(roomName);
 
       setJoinDetails(
-        pending ?? {
-          ...EMPTY_JOIN_DETAILS,
-          isCreator: creatorPassword !== null,
-          password: creatorPassword ?? "",
-        },
+        pending
+          ? { ...pending, videoBackgroundDataUrl: "" }
+          : {
+              ...EMPTY_JOIN_DETAILS,
+              isCreator: creatorPassword !== null,
+              password: creatorPassword ?? "",
+            },
       );
       setJoinDetailsReady(true);
     });
@@ -430,10 +436,15 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             noiseSuppressionSupported={conference.noiseSuppressionSupported}
             onAudioInputChange={conference.setAudioInputDevice}
             onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
+            onVideoBackgroundChange={
+              conference.setVideoBackgroundEnabled
+            }
             onVideoInputChange={conference.setVideoInputDevice}
             roomPassword={
               joinDetails.isCreator ? joinDetails.password : null
             }
+            videoBackgroundAvailable={conference.videoBackgroundAvailable}
+            videoBackgroundEnabled={conference.videoBackgroundEnabled}
             videoInputId={conference.videoInputId}
           />
           <button

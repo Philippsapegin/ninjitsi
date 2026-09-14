@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useJitsiServerUrl } from "@/lib/runtimeConfig";
 import { getStoredLocale, localize } from "@/lib/i18n";
+import {
+  DEFAULT_PROFILE_TILE_COLOR,
+  MAX_VIDEO_BACKGROUND_FILE_SIZE,
+  normalizeProfileTileColor,
+} from "@/lib/profiles";
 import { loadJitsiRuntime } from "./loader";
 import {
   readMediaPreferences,
@@ -34,6 +39,9 @@ export interface JoinOptions {
   profileId: string;
   startAudioMuted: boolean;
   startVideoMuted: boolean;
+  tileColor: string;
+  videoBackgroundDataUrl: string;
+  videoBackgroundRevision: string;
 }
 
 interface ConferenceController {
@@ -65,6 +73,7 @@ interface ConferenceController {
   setAudioInputDevice: (deviceId: string) => Promise<void>;
   setNoiseSuppressionEnabled: (enabled: boolean) => Promise<void>;
   setVideoInputDevice: (deviceId: string) => Promise<void>;
+  setVideoBackgroundEnabled: (enabled: boolean) => Promise<void>;
   join: (options: JoinOptions) => Promise<void>;
   leave: () => Promise<void>;
   participants: ParticipantView[];
@@ -73,6 +82,8 @@ interface ConferenceController {
   toggleScreenShare: () => Promise<void>;
   toggleVideo: () => Promise<void>;
   videoInputId: string;
+  videoBackgroundAvailable: boolean;
+  videoBackgroundEnabled: boolean;
 }
 
 const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
@@ -80,7 +91,17 @@ const ATTACHMENT_DATA_MESSAGE_TYPE = "ninjitsi.attachment-data.v2";
 const CHAT_TEXT_MESSAGE_PREFIX = "__ninjitsi_chat_v2__:";
 const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
 const PRIVATE_CHAT_MESSAGE_TYPE = "ninjitsi.private-chat.v1";
+const VIDEO_BACKGROUND_MESSAGE_TYPE = "ninjitsi.video-background.v1";
+const VIDEO_BACKGROUND_ENABLED_PROPERTY = "ninjitsiVideoBackgroundEnabled";
+const VIDEO_BACKGROUND_REVISION_PROPERTY = "ninjitsiVideoBackgroundRevision";
+const TILE_COLOR_PROPERTY = "ninjitsiTileColor";
 const ATTACHMENT_CHUNK_SIZE = 12_000;
+const VIDEO_BACKGROUND_CHUNK_SIZE = 12_000;
+const MAX_VIDEO_BACKGROUND_DATA_LENGTH =
+  Math.ceil((MAX_VIDEO_BACKGROUND_FILE_SIZE * 4) / 3) + 256;
+const MAX_VIDEO_BACKGROUND_CHUNKS = Math.ceil(
+  MAX_VIDEO_BACKGROUND_DATA_LENGTH / VIDEO_BACKGROUND_CHUNK_SIZE,
+);
 const MAX_RECONNECT_DELAY = 15_000;
 const RECOVERABLE_CONFERENCE_ERRORS = new Set([
   "conference.connectionError",
@@ -137,6 +158,32 @@ interface IncomingAttachment {
   senderName: string;
   size: number;
   timestamp: number;
+  totalChunks: number;
+}
+
+type VideoBackgroundWireMessage =
+  | {
+      kind: "start";
+      revision: string;
+      totalChunks: number;
+      type: typeof VIDEO_BACKGROUND_MESSAGE_TYPE;
+    }
+  | {
+      data: string;
+      index: number;
+      kind: "chunk";
+      revision: string;
+      type: typeof VIDEO_BACKGROUND_MESSAGE_TYPE;
+    }
+  | {
+      kind: "end";
+      revision: string;
+      type: typeof VIDEO_BACKGROUND_MESSAGE_TYPE;
+    };
+
+interface IncomingVideoBackground {
+  chunks: string[];
+  revision: string;
   totalChunks: number;
 }
 
@@ -330,6 +377,159 @@ function deliverAttachmentDataWireMessage(
     );
     return false;
   }
+}
+
+function parseVideoBackgroundWireMessage(
+  payload: unknown,
+): VideoBackgroundWireMessage | null {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("type" in payload) ||
+    payload.type !== VIDEO_BACKGROUND_MESSAGE_TYPE ||
+    !("kind" in payload) ||
+    typeof payload.kind !== "string" ||
+    !("revision" in payload) ||
+    typeof payload.revision !== "string" ||
+    payload.revision.length < 1 ||
+    payload.revision.length > 180
+  ) {
+    return null;
+  }
+
+  if (
+    payload.kind === "start" &&
+    "totalChunks" in payload &&
+    typeof payload.totalChunks === "number" &&
+    Number.isInteger(payload.totalChunks) &&
+    payload.totalChunks >= 1 &&
+    payload.totalChunks <= MAX_VIDEO_BACKGROUND_CHUNKS
+  ) {
+    return {
+      kind: "start",
+      revision: payload.revision,
+      totalChunks: payload.totalChunks,
+      type: VIDEO_BACKGROUND_MESSAGE_TYPE,
+    };
+  }
+
+  if (
+    payload.kind === "chunk" &&
+    "data" in payload &&
+    typeof payload.data === "string" &&
+    payload.data.length <= VIDEO_BACKGROUND_CHUNK_SIZE &&
+    "index" in payload &&
+    typeof payload.index === "number" &&
+    Number.isInteger(payload.index) &&
+    payload.index >= 0 &&
+    payload.index < MAX_VIDEO_BACKGROUND_CHUNKS
+  ) {
+    return {
+      data: payload.data,
+      index: payload.index,
+      kind: "chunk",
+      revision: payload.revision,
+      type: VIDEO_BACKGROUND_MESSAGE_TYPE,
+    };
+  }
+
+  return payload.kind === "end"
+    ? {
+        kind: "end",
+        revision: payload.revision,
+        type: VIDEO_BACKGROUND_MESSAGE_TYPE,
+      }
+    : null;
+}
+
+function deliverVideoBackgroundWireMessage(
+  conference: JitsiConferenceLike,
+  message: VideoBackgroundWireMessage,
+  participantId = "",
+) {
+  if (!conference.sendMessage) {
+    return false;
+  }
+
+  try {
+    conference.sendMessage(message, participantId, true);
+    return true;
+  } catch (caughtError) {
+    console.warn(
+      "Ninjitsi: video background data channel unavailable",
+      caughtError,
+    );
+    return false;
+  }
+}
+
+async function sendVideoBackground(
+  conference: JitsiConferenceLike,
+  dataUrl: string,
+  revision: string,
+  participantId = "",
+) {
+  if (
+    !revision ||
+    dataUrl.length > MAX_VIDEO_BACKGROUND_DATA_LENGTH ||
+    !/^data:image\/(?:gif|jpeg|png);base64,/i.test(dataUrl)
+  ) {
+    return false;
+  }
+
+  const totalChunks = Math.ceil(
+    dataUrl.length / VIDEO_BACKGROUND_CHUNK_SIZE,
+  );
+
+  if (
+    !deliverVideoBackgroundWireMessage(
+      conference,
+      {
+        kind: "start",
+        revision,
+        totalChunks,
+        type: VIDEO_BACKGROUND_MESSAGE_TYPE,
+      },
+      participantId,
+    )
+  ) {
+    return false;
+  }
+
+  for (let index = 0; index < totalChunks; index += 1) {
+    if (
+      !deliverVideoBackgroundWireMessage(
+        conference,
+        {
+          data: dataUrl.slice(
+            index * VIDEO_BACKGROUND_CHUNK_SIZE,
+            (index + 1) * VIDEO_BACKGROUND_CHUNK_SIZE,
+          ),
+          index,
+          kind: "chunk",
+          revision,
+          type: VIDEO_BACKGROUND_MESSAGE_TYPE,
+        },
+        participantId,
+      )
+    ) {
+      return false;
+    }
+
+    if (index > 0 && index % 20 === 0) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    }
+  }
+
+  return deliverVideoBackgroundWireMessage(
+    conference,
+    {
+      kind: "end",
+      revision,
+      type: VIDEO_BACKGROUND_MESSAGE_TYPE,
+    },
+    participantId,
+  );
 }
 
 function normalizeReplyReference(
@@ -653,7 +853,17 @@ function pickPreferredVideo(tracks: JitsiTrackLike[]) {
 function createDemoParticipants(
   displayName: string,
   avatarUrl: string,
+  tileColor: string,
+  videoBackgroundUrl: string,
 ): ParticipantView[] {
+  const demoTileColors = [
+    "#485D78",
+    "#6B576F",
+    "#6D614B",
+    "#466B5F",
+    "#735153",
+    "#52606B",
+  ];
   const people = [
     displayName,
     ui("Laura K.", "Лера К."),
@@ -673,6 +883,14 @@ function createDemoParticipants(
     isLocal: index === 0,
     isModerator: index === 0,
     isScreenSharing: false,
+    tileColor:
+      index === 0
+        ? normalizeProfileTileColor(tileColor)
+        : demoTileColors[
+            Math.max(0, index - 1) % demoTileColors.length
+          ],
+    videoBackgroundEnabled: false,
+    videoBackgroundUrl: index === 0 ? videoBackgroundUrl : undefined,
     videoMuted: index === 4,
   }));
 }
@@ -698,6 +916,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
     useState(false);
   const [isDeviceSwitchBusy, setIsDeviceSwitchBusy] = useState(false);
   const [isSendingAttachment, setIsSendingAttachment] = useState(false);
+  const [videoBackgroundAvailable, setVideoBackgroundAvailable] =
+    useState(false);
+  const [videoBackgroundEnabled, setVideoBackgroundEnabledState] =
+    useState(false);
   const [connectionStats, setConnectionStats] = useState<
     Record<string, { pingMs: number | null; quality: number | null }>
   >({});
@@ -707,6 +929,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const localIdRef = useRef("local");
   const localNameRef = useRef(ui("You", "Вы"));
   const localAvatarRef = useRef("");
+  const localTileColorRef = useRef(DEFAULT_PROFILE_TILE_COLOR);
+  const localVideoBackgroundDataRef = useRef("");
+  const localVideoBackgroundRevisionRef = useRef("");
+  const videoBackgroundEnabledRef = useRef(false);
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const desktopRemovalRef = useRef(new WeakSet<JitsiTrackLike>());
@@ -719,6 +945,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const noiseSuppressionEnabledRef = useRef(false);
   const incomingAttachmentsRef = useRef(
     new Map<string, IncomingAttachment>(),
+  );
+  const incomingVideoBackgroundsRef = useRef(
+    new Map<string, IncomingVideoBackground>(),
+  );
+  const remoteVideoBackgroundsRef = useRef(
+    new Map<string, { dataUrl: string; revision: string }>(),
   );
   const pendingPingsRef = useRef(
     new Map<string, { participantId: string; startedAt: number }>(),
@@ -815,6 +1047,22 @@ export function useJitsiConference(roomName: string): ConferenceController {
         const tracks = participant.getTracks();
         const videoTrack = pickPreferredVideo(tracks);
         const audioTrack = tracks.find((track) => track.getType() === "audio");
+        const videoBackgroundRevision =
+          typeof participant.getProperty?.(
+            VIDEO_BACKGROUND_REVISION_PROPERTY,
+          ) === "string"
+            ? String(
+                participant.getProperty?.(
+                  VIDEO_BACKGROUND_REVISION_PROPERTY,
+                ),
+              ).slice(0, 180)
+            : "";
+        const videoBackgroundEnabled =
+          participant.getProperty?.(VIDEO_BACKGROUND_ENABLED_PROPERTY) ===
+          "true";
+        const receivedBackground = remoteVideoBackgroundsRef.current.get(
+          participant.getId(),
+        );
 
         return {
           audioMuted: participant.isAudioMuted(),
@@ -831,6 +1079,15 @@ export function useJitsiConference(roomName: string): ConferenceController {
           isLocal: false,
           isModerator: participant.getRole() === "moderator",
           isScreenSharing: videoTrack?.getVideoType?.() === "desktop",
+          tileColor: normalizeProfileTileColor(
+            participant.getProperty?.(TILE_COLOR_PROPERTY),
+          ),
+          videoBackgroundEnabled,
+          videoBackgroundUrl:
+            videoBackgroundEnabled &&
+            receivedBackground?.revision === videoBackgroundRevision
+              ? receivedBackground.dataUrl
+              : undefined,
           videoMuted: videoTrack
             ? videoTrack.isMuted()
             : participant.isVideoMuted(),
@@ -871,6 +1128,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
         isLocal: true,
         isModerator: conference.isModerator(),
         isScreenSharing: localVideo?.getVideoType?.() === "desktop",
+        tileColor: localTileColorRef.current,
+        videoBackgroundEnabled: videoBackgroundEnabledRef.current,
+        videoBackgroundUrl: videoBackgroundEnabledRef.current
+          ? localVideoBackgroundDataRef.current
+          : undefined,
         videoMuted: localVideo ? localVideo.isMuted() : true,
         videoTrack: localVideo,
       },
@@ -980,6 +1242,18 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setError(null);
       localNameRef.current = options.displayName;
       localAvatarRef.current = options.avatarDataUrl;
+      localTileColorRef.current = normalizeProfileTileColor(options.tileColor);
+      localVideoBackgroundDataRef.current =
+        options.videoBackgroundDataUrl || "";
+      localVideoBackgroundRevisionRef.current =
+        options.videoBackgroundDataUrl
+          ? options.videoBackgroundRevision.slice(0, 180)
+          : "";
+      setVideoBackgroundAvailable(Boolean(options.videoBackgroundDataUrl));
+      if (!isRecovery) {
+        videoBackgroundEnabledRef.current = false;
+        setVideoBackgroundEnabledState(false);
+      }
       disposedRef.current = false;
       if (!isRecovery) {
         hasJoinedRef.current = false;
@@ -987,6 +1261,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
         setChatMessages([]);
         setConnectionStats({});
         incomingAttachmentsRef.current.clear();
+        incomingVideoBackgroundsRef.current.clear();
+        remoteVideoBackgroundsRef.current.clear();
       }
 
       if (isDemo) {
@@ -995,6 +1271,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
         const demoParticipants = createDemoParticipants(
           options.displayName,
           options.avatarDataUrl,
+          options.tileColor,
+          options.videoBackgroundDataUrl,
         );
 
         demoParticipants[0].audioMuted = options.startAudioMuted;
@@ -1125,6 +1403,45 @@ export function useJitsiConference(roomName: string): ConferenceController {
               "avatarURL",
               options.avatarDataUrl,
             );
+            conference.setLocalParticipantProperty?.(
+              TILE_COLOR_PROPERTY,
+              localTileColorRef.current,
+            );
+            conference.setLocalParticipantProperty?.(
+              VIDEO_BACKGROUND_REVISION_PROPERTY,
+              localVideoBackgroundRevisionRef.current,
+            );
+            conference.setLocalParticipantProperty?.(
+              VIDEO_BACKGROUND_ENABLED_PROPERTY,
+              videoBackgroundEnabledRef.current ? "true" : "false",
+            );
+
+            const publishVideoBackground = async (participantId = "") => {
+              if (
+                conferenceRef.current !== conference ||
+                !videoBackgroundEnabledRef.current ||
+                !localVideoBackgroundDataRef.current ||
+                !localVideoBackgroundRevisionRef.current
+              ) {
+                return;
+              }
+
+              const sent = await sendVideoBackground(
+                conference,
+                localVideoBackgroundDataRef.current,
+                localVideoBackgroundRevisionRef.current,
+                participantId,
+              );
+
+              if (!sent && conferenceRef.current === conference) {
+                setError(
+                  ui(
+                    "The video background could not be sent to the meeting.",
+                    "Не удалось отправить видеофон участникам встречи.",
+                  ),
+                );
+              }
+            };
 
             const sendPingRound = () => {
               if (
@@ -1175,6 +1492,39 @@ export function useJitsiConference(roomName: string): ConferenceController {
             resyncEvents.forEach((eventName) =>
               conference.on(eventName, scheduleParticipantSync),
             );
+
+            if (conferenceEvents.USER_JOINED) {
+              conference.on(
+                conferenceEvents.USER_JOINED,
+                (participantId) => {
+                  if (typeof participantId === "string") {
+                    window.setTimeout(
+                      () => void publishVideoBackground(participantId),
+                      800,
+                    );
+                  }
+                },
+              );
+            }
+            if (conferenceEvents.DATA_CHANNEL_OPENED) {
+              conference.on(conferenceEvents.DATA_CHANNEL_OPENED, () => {
+                void publishVideoBackground();
+              });
+            }
+            if (conferenceEvents.USER_LEFT) {
+              conference.on(conferenceEvents.USER_LEFT, (participantId) => {
+                if (typeof participantId !== "string") {
+                  return;
+                }
+
+                remoteVideoBackgroundsRef.current.delete(participantId);
+                for (const transferKey of incomingVideoBackgroundsRef.current.keys()) {
+                  if (transferKey.startsWith(`${participantId}:`)) {
+                    incomingVideoBackgroundsRef.current.delete(transferKey);
+                  }
+                }
+              });
+            }
 
             conference.on(
               conferenceEvents.DOMINANT_SPEAKER_CHANGED,
@@ -1325,9 +1675,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
                   incomingAttachmentsRef.current.delete(transferKey);
                   if (
                     !transfer ||
-                    transfer.chunks.some(
-                      (chunk) => typeof chunk !== "string",
-                    )
+                    !Array.from(
+                      { length: transfer.totalChunks },
+                      (_, index) =>
+                        typeof transfer.chunks[index] === "string",
+                    ).every(Boolean)
                   ) {
                     return;
                   }
@@ -1418,6 +1770,91 @@ export function useJitsiConference(roomName: string): ConferenceController {
                         : null;
 
                   if (typeof senderId !== "string") {
+                    return;
+                  }
+
+                  const videoBackgroundMessage =
+                    parseVideoBackgroundWireMessage(rawPayload);
+
+                  if (videoBackgroundMessage) {
+                    const transferKey = `${senderId}:${videoBackgroundMessage.revision}`;
+
+                    if (videoBackgroundMessage.kind === "start") {
+                      for (const existingKey of incomingVideoBackgroundsRef.current.keys()) {
+                        if (existingKey.startsWith(`${senderId}:`)) {
+                          incomingVideoBackgroundsRef.current.delete(existingKey);
+                        }
+                      }
+                      incomingVideoBackgroundsRef.current.set(transferKey, {
+                        chunks: new Array(
+                          videoBackgroundMessage.totalChunks,
+                        ),
+                        revision: videoBackgroundMessage.revision,
+                        totalChunks: videoBackgroundMessage.totalChunks,
+                      });
+                    } else if (videoBackgroundMessage.kind === "chunk") {
+                      const transfer =
+                        incomingVideoBackgroundsRef.current.get(transferKey);
+
+                      if (
+                        transfer &&
+                        videoBackgroundMessage.index < transfer.totalChunks
+                      ) {
+                        transfer.chunks[videoBackgroundMessage.index] =
+                          videoBackgroundMessage.data;
+                      }
+                    } else {
+                      const transfer =
+                        incomingVideoBackgroundsRef.current.get(transferKey);
+
+                      incomingVideoBackgroundsRef.current.delete(transferKey);
+                      if (
+                        !transfer ||
+                        !Array.from(
+                          { length: transfer.totalChunks },
+                          (_, index) =>
+                            typeof transfer.chunks[index] === "string",
+                        ).every(Boolean)
+                      ) {
+                        return;
+                      }
+
+                      const dataUrl = transfer.chunks.join("");
+                      const sender = conference
+                        .getParticipants()
+                        .find(
+                          (participant) =>
+                            participant.getId() === senderId,
+                        );
+                      const currentRevision = sender?.getProperty?.(
+                        VIDEO_BACKGROUND_REVISION_PROPERTY,
+                      );
+
+                      if (
+                        currentRevision !== transfer.revision ||
+                        dataUrl.length > MAX_VIDEO_BACKGROUND_DATA_LENGTH ||
+                        !/^data:image\/(?:gif|jpeg|png);base64,/i.test(dataUrl)
+                      ) {
+                        return;
+                      }
+
+                      remoteVideoBackgroundsRef.current.set(senderId, {
+                        dataUrl,
+                        revision: transfer.revision,
+                      });
+                      setParticipants((current) =>
+                        current.map((participant) =>
+                          participant.id === senderId &&
+                          participant.videoBackgroundEnabled
+                            ? {
+                                ...participant,
+                                videoBackgroundUrl: dataUrl,
+                              }
+                            : participant,
+                        ),
+                      );
+                    }
+
                     return;
                   }
 
@@ -1534,6 +1971,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
               setStatus("joined");
               syncParticipants();
               window.setTimeout(sendPingRound, 1_000);
+              window.setTimeout(
+                () => void publishVideoBackground(),
+                600,
+              );
               if (pingIntervalRef.current !== null) {
                 window.clearInterval(pingIntervalRef.current);
               }
@@ -2246,6 +2687,81 @@ export function useJitsiConference(roomName: string): ConferenceController {
     [isDemo, persistMediaPreferences, serverUrl, setMediaBusy],
   );
 
+  const setVideoBackgroundEnabled = useCallback(
+    async (enabled: boolean) => {
+      if (
+        enabled &&
+        (!localVideoBackgroundDataRef.current ||
+          !localVideoBackgroundRevisionRef.current)
+      ) {
+        setError(
+          ui(
+            "This profile has no video background.",
+            "В этом профиле нет видеофона.",
+          ),
+        );
+        return;
+      }
+
+      setError(null);
+      videoBackgroundEnabledRef.current = enabled;
+      setVideoBackgroundEnabledState(enabled);
+
+      if (isDemo) {
+        setParticipants((current) =>
+          current.map((participant) =>
+            participant.isLocal
+              ? {
+                  ...participant,
+                  videoBackgroundEnabled: enabled,
+                  videoBackgroundUrl: enabled
+                    ? localVideoBackgroundDataRef.current
+                    : undefined,
+                }
+              : participant,
+          ),
+        );
+        return;
+      }
+
+      const conference = conferenceRef.current;
+
+      if (!conference) {
+        return;
+      }
+
+      conference.setLocalParticipantProperty?.(
+        VIDEO_BACKGROUND_ENABLED_PROPERTY,
+        enabled ? "true" : "false",
+      );
+      syncParticipants();
+
+      if (
+        enabled &&
+        !(await sendVideoBackground(
+          conference,
+          localVideoBackgroundDataRef.current,
+          localVideoBackgroundRevisionRef.current,
+        ))
+      ) {
+        videoBackgroundEnabledRef.current = false;
+        setVideoBackgroundEnabledState(false);
+        conference.setLocalParticipantProperty?.(
+          VIDEO_BACKGROUND_ENABLED_PROPERTY,
+          "false",
+        );
+        syncParticipants();
+        setError(
+          ui(
+            "The video background could not be sent to the meeting.",
+            "Не удалось отправить видеофон участникам встречи.",
+          ),
+        );
+      }
+    },
+    [isDemo, syncParticipants],
+  );
+
   const sendChatMessage = useCallback(
     (
       rawText: string,
@@ -2542,6 +3058,13 @@ export function useJitsiConference(roomName: string): ConferenceController {
     setChatMessages([]);
     setConnectionStats({});
     incomingAttachmentsRef.current.clear();
+    incomingVideoBackgroundsRef.current.clear();
+    remoteVideoBackgroundsRef.current.clear();
+    localVideoBackgroundDataRef.current = "";
+    localVideoBackgroundRevisionRef.current = "";
+    videoBackgroundEnabledRef.current = false;
+    setVideoBackgroundAvailable(false);
+    setVideoBackgroundEnabledState(false);
     setLocalAudioLevel(0);
     setStatus("left");
   }, [isDemo, teardown]);
@@ -2598,6 +3121,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     sendChatMessage,
     setAudioInputDevice,
     setNoiseSuppressionEnabled,
+    setVideoBackgroundEnabled,
     setVideoInputDevice,
     join,
     leave,
@@ -2607,5 +3131,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     toggleScreenShare,
     toggleVideo,
     videoInputId,
+    videoBackgroundAvailable,
+    videoBackgroundEnabled,
   };
 }
