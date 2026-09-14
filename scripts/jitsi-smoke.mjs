@@ -309,7 +309,9 @@ try {
   await page.getByRole("button", { name: "Цвет плитки" }).click();
   await page.getByLabel("HEX-цвет плитки").fill("#326E72");
   await page.getByLabel("HEX-цвет плитки").press("Enter");
-  await page.getByRole("button", { name: "Добавить видеофон" }).click();
+  await page
+    .getByRole("button", { name: "Добавить фон без камеры" })
+    .click();
   const backgroundDataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
 

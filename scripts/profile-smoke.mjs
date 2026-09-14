@@ -49,6 +49,81 @@ try {
     throw new Error("Без сохранённых профилей имя должно быть пустым");
   }
   await page.getByLabel("Ваше имя").fill("Profile Tester");
+  const appearanceLayout = await page.evaluate(() => {
+    const avatar = document.querySelector("[data-profile-avatar]");
+    const actions = Array.from(
+      document.querySelectorAll(
+        "[data-profile-editor] button[data-tooltip]",
+      ),
+    );
+
+    return {
+      actions: actions.map((action) => {
+        const rect = action.getBoundingClientRect();
+        const icon = action.querySelector("svg")?.getBoundingClientRect();
+        const style = getComputedStyle(action);
+
+        return {
+          background: style.backgroundColor,
+          bottom: rect.bottom,
+          color: style.color,
+          height: rect.height,
+          iconHeight: icon?.height,
+          label: action.getAttribute("aria-label"),
+          left: rect.left,
+          title: action.getAttribute("title"),
+          tooltip: getComputedStyle(action, "::after").content,
+          top: rect.top,
+          width: rect.width,
+        };
+      }),
+      avatar: avatar?.getBoundingClientRect().toJSON(),
+    };
+  });
+
+  if (
+    !appearanceLayout.avatar ||
+    appearanceLayout.actions.length !== 3 ||
+    appearanceLayout.actions.some(
+      (action) =>
+        action.left <= appearanceLayout.avatar.right ||
+        action.top < appearanceLayout.avatar.top ||
+        action.bottom > appearanceLayout.avatar.bottom ||
+        action.width !== 16 ||
+        action.height !== 16 ||
+        !action.iconHeight ||
+        action.iconHeight < 11 ||
+        action.title !== null ||
+        action.tooltip === "none",
+    ) ||
+    appearanceLayout.actions.some(
+      (action, index) =>
+        index > 0 &&
+        action.top - appearanceLayout.actions[index - 1].bottom < 1,
+    ) ||
+    appearanceLayout.actions[1].background !== "rgb(216, 255, 99)" ||
+    appearanceLayout.actions[1].color !== "rgb(17, 20, 11)" ||
+    appearanceLayout.actions[2].background !== "rgb(52, 59, 67)" ||
+    appearanceLayout.actions[2].color !== "rgb(216, 255, 99)"
+  ) {
+    throw new Error(
+      `Рейка кнопок профиля выглядит неверно: ${JSON.stringify(appearanceLayout)}`,
+    );
+  }
+
+  const backgroundAction = page.getByRole("button", {
+    name: "Добавить фон без камеры",
+  });
+
+  await backgroundAction.hover();
+  await page.waitForTimeout(120);
+  if (
+    (await backgroundAction.evaluate(
+      (button) => getComputedStyle(button, "::after").opacity,
+    )) !== "1"
+  ) {
+    throw new Error("Кастомный тултип фона не появляется при наведении");
+  }
   const avatarDataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
 
@@ -73,7 +148,9 @@ try {
   await page.getByRole("button", { name: "Цвет плитки" }).click();
   await page.getByLabel("HEX-цвет плитки").fill("#326E72");
   await page.getByLabel("HEX-цвет плитки").press("Enter");
-  await page.getByRole("button", { name: "Добавить видеофон" }).click();
+  await page
+    .getByRole("button", { name: "Добавить фон без камеры" })
+    .click();
   await page.getByRole("dialog", { name: "Видеофон" }).waitFor();
   const backgroundDataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
@@ -202,7 +279,9 @@ try {
     throw new Error("Сохранённый профиль нельзя выбрать повторно");
   }
 
-  await page.getByRole("button", { name: "Сменить видеофон" }).click();
+  await page
+    .getByRole("button", { name: "Сменить фон без камеры" })
+    .click();
   await page
     .getByRole("dialog", { name: "Видеофон" })
     .locator("img")
@@ -245,6 +324,7 @@ try {
         deletion: "selected profile removed",
         initialRoomSound: "played for creator",
         joinOverlayStrokes: "removed",
+        profileActions: "external rail, colors and tooltips passed",
         profileCount: storedProfiles.length,
         selection: "restored",
         status: "passed",

@@ -357,10 +357,17 @@ export function ProfileEditor({
           <button
             aria-label={
               value.avatarDataUrl
-                ? tr("Change avatar", "Сменить аватарку")
-                : tr("Upload avatar", "Загрузить аватарку")
+                ? tr(
+                    "Avatar preview — click to change",
+                    "Аватарка — нажмите, чтобы сменить",
+                  )
+                : tr(
+                    "Avatar area — click to upload",
+                    "Область аватарки — нажмите, чтобы загрузить",
+                  )
             }
             className={styles.avatarButton}
+            data-profile-avatar
             onClick={() => avatarInputRef.current?.click()}
             type="button"
           >
@@ -373,80 +380,99 @@ export function ProfileEditor({
             ) : (
               <UserRound size={22} />
             )}
-            <i>
-              <ImagePlus size={12} />
-            </i>
           </button>
 
-          <div className={styles.colorPicker} ref={colorPickerRef}>
+          <div className={styles.actionRail}>
+            <div className={styles.colorPicker} ref={colorPickerRef}>
+              <button
+                aria-expanded={colorOpen}
+                aria-label={tr("Tile color", "Цвет плитки")}
+                className={styles.appearanceButton}
+                data-tooltip={tr("Tile color", "Цвет плитки")}
+                onClick={toggleColorPicker}
+                style={{ "--profile-color": value.tileColor } as CSSProperties}
+                type="button"
+              >
+                <Palette size={11} />
+              </button>
+              {colorOpen && (
+                <div
+                  aria-label={tr("Choose tile color", "Выбор цвета плитки")}
+                  className={styles.colorPopover}
+                  role="dialog"
+                >
+                  <strong>{tr("Tile color", "Цвет плитки")}</strong>
+                  <div className={styles.colorPresets}>
+                    {TILE_COLOR_PRESETS.map((color) => (
+                      <button
+                        aria-label={color}
+                        aria-pressed={value.tileColor === color}
+                        key={color}
+                        onClick={() => {
+                          setColorText(color);
+                          setAssetError("");
+                          onChange({ ...valueRef.current, tileColor: color });
+                        }}
+                        style={{ backgroundColor: color }}
+                        type="button"
+                      />
+                    ))}
+                  </div>
+                  <label>
+                    <span>HEX</span>
+                    <input
+                      aria-label={tr("HEX tile color", "HEX-цвет плитки")}
+                      maxLength={7}
+                      onBlur={applyTileColor}
+                      onChange={(event) =>
+                        setColorText(event.target.value.toUpperCase())
+                      }
+                      onKeyDown={handleColorKeyDown}
+                      placeholder="#485D78"
+                      spellCheck={false}
+                      value={colorText}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
             <button
-              aria-expanded={colorOpen}
-              aria-label={tr("Tile color", "Цвет плитки")}
-              className={styles.appearanceButton}
-              onClick={toggleColorPicker}
-              style={{ "--profile-color": value.tileColor } as CSSProperties}
-              title={tr("Tile color", "Цвет плитки")}
+              aria-label={
+                value.videoBackgroundRevision
+                  ? tr("Change camera-off background", "Сменить фон без камеры")
+                  : tr("Add camera-off background", "Добавить фон без камеры")
+              }
+              className={`${styles.appearanceButton} ${styles.backgroundButton}`}
+              data-tooltip={
+                value.videoBackgroundRevision
+                  ? tr("Change camera-off background", "Сменить фон без камеры")
+                  : tr("Add camera-off background", "Добавить фон без камеры")
+              }
+              onClick={() => void openBackgroundEditor()}
               type="button"
             >
-              <Palette size={11} />
+              <ImagePlus size={11} />
             </button>
-            {colorOpen && (
-              <div
-                aria-label={tr("Choose tile color", "Выбор цвета плитки")}
-                className={styles.colorPopover}
-                role="dialog"
-              >
-                <strong>{tr("Tile color", "Цвет плитки")}</strong>
-                <div className={styles.colorPresets}>
-                  {TILE_COLOR_PRESETS.map((color) => (
-                    <button
-                      aria-label={color}
-                      aria-pressed={value.tileColor === color}
-                      key={color}
-                      onClick={() => {
-                        setColorText(color);
-                        setAssetError("");
-                        onChange({ ...valueRef.current, tileColor: color });
-                      }}
-                      style={{ backgroundColor: color }}
-                      type="button"
-                    />
-                  ))}
-                </div>
-                <label>
-                  <span>HEX</span>
-                  <input
-                    aria-label={tr("HEX tile color", "HEX-цвет плитки")}
-                    maxLength={7}
-                    onBlur={applyTileColor}
-                    onChange={(event) =>
-                      setColorText(event.target.value.toUpperCase())
-                    }
-                    onKeyDown={handleColorKeyDown}
-                    placeholder="#485D78"
-                    spellCheck={false}
-                    value={colorText}
-                  />
-                </label>
-              </div>
-            )}
-          </div>
 
-          <button
-            aria-label={
-              value.videoBackgroundRevision
-                ? tr("Change video background", "Сменить видеофон")
-                : tr("Add video background", "Добавить видеофон")
-            }
-            className={`${styles.appearanceButton} ${styles.backgroundButton} ${
-              value.videoBackgroundRevision ? styles.assetPresent : ""
-            }`}
-            onClick={() => void openBackgroundEditor()}
-            title={tr("Video background", "Видеофон")}
-            type="button"
-          >
-            <ImagePlus size={11} />
-          </button>
+            <button
+              aria-label={
+                value.avatarDataUrl
+                  ? tr("Change avatar", "Сменить аватарку")
+                  : tr("Add avatar", "Добавить аватарку")
+              }
+              className={`${styles.appearanceButton} ${styles.avatarActionButton}`}
+              data-tooltip={
+                value.avatarDataUrl
+                  ? tr("Change avatar", "Сменить аватарку")
+                  : tr("Add avatar", "Добавить аватарку")
+              }
+              onClick={() => avatarInputRef.current?.click()}
+              type="button"
+            >
+              <ImagePlus size={12} />
+            </button>
+          </div>
         </div>
 
         <label className={styles.nameField}>
