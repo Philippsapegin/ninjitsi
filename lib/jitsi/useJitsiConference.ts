@@ -76,6 +76,7 @@ interface ConferenceController {
 }
 
 const ATTACHMENT_MESSAGE_PREFIX = "__ninjitsi_attachment_v1__:";
+const ATTACHMENT_DATA_MESSAGE_TYPE = "ninjitsi.attachment-data.v2";
 const CHAT_TEXT_MESSAGE_PREFIX = "__ninjitsi_chat_v2__:";
 const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
 const PRIVATE_CHAT_MESSAGE_TYPE = "ninjitsi.private-chat.v1";
@@ -114,6 +115,14 @@ type AttachmentWireMessage =
       id: string;
       kind: "end";
     };
+
+interface AttachmentDataWireMessage {
+  attachment: AttachmentWireMessage;
+  recipientIds: string[];
+  recipientNames: string[];
+  timestamp: number;
+  type: typeof ATTACHMENT_DATA_MESSAGE_TYPE;
+}
 
 interface IncomingAttachment {
   avatarUrl: string;
@@ -165,16 +174,162 @@ function parseAttachmentWireMessage(text: string) {
   }
 
   try {
-    return JSON.parse(
-      text.slice(ATTACHMENT_MESSAGE_PREFIX.length),
-    ) as AttachmentWireMessage;
+    return normalizeAttachmentWireMessage(
+      JSON.parse(text.slice(ATTACHMENT_MESSAGE_PREFIX.length)),
+    );
   } catch {
     return null;
   }
 }
 
+function normalizeAttachmentWireMessage(
+  payload: unknown,
+): AttachmentWireMessage | null {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("id" in payload) ||
+    typeof payload.id !== "string" ||
+    !("kind" in payload) ||
+    typeof payload.kind !== "string"
+  ) {
+    return null;
+  }
+
+  const id = payload.id.slice(0, 180);
+
+  if (!id) {
+    return null;
+  }
+
+  if (
+    payload.kind === "start" &&
+    "mimeType" in payload &&
+    typeof payload.mimeType === "string" &&
+    "name" in payload &&
+    typeof payload.name === "string" &&
+    "size" in payload &&
+    typeof payload.size === "number" &&
+    Number.isInteger(payload.size) &&
+    payload.size >= 0 &&
+    payload.size <= MAX_CHAT_ATTACHMENT_SIZE &&
+    "totalChunks" in payload &&
+    typeof payload.totalChunks === "number" &&
+    Number.isInteger(payload.totalChunks) &&
+    payload.totalChunks >= 1 &&
+    payload.totalChunks <= 300
+  ) {
+    return {
+      id,
+      kind: "start",
+      mimeType: payload.mimeType.slice(0, 180),
+      name: payload.name.slice(0, 180),
+      size: payload.size,
+      totalChunks: payload.totalChunks,
+    };
+  }
+
+  if (
+    payload.kind === "chunk" &&
+    "data" in payload &&
+    typeof payload.data === "string" &&
+    payload.data.length <= ATTACHMENT_CHUNK_SIZE + 8 &&
+    "index" in payload &&
+    typeof payload.index === "number" &&
+    Number.isInteger(payload.index) &&
+    payload.index >= 0 &&
+    payload.index < 300
+  ) {
+    return {
+      data: payload.data,
+      id,
+      index: payload.index,
+      kind: "chunk",
+    };
+  }
+
+  return payload.kind === "end" ? { id, kind: "end" } : null;
+}
+
 function attachmentMessage(message: AttachmentWireMessage) {
   return `${ATTACHMENT_MESSAGE_PREFIX}${JSON.stringify(message)}`;
+}
+
+function parseAttachmentDataWireMessage(
+  payload: unknown,
+): AttachmentDataWireMessage | null {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("type" in payload) ||
+    payload.type !== ATTACHMENT_DATA_MESSAGE_TYPE ||
+    !("attachment" in payload) ||
+    !("timestamp" in payload) ||
+    typeof payload.timestamp !== "number" ||
+    !Number.isFinite(payload.timestamp)
+  ) {
+    return null;
+  }
+
+  const attachment = normalizeAttachmentWireMessage(payload.attachment);
+
+  if (!attachment) {
+    return null;
+  }
+
+  return {
+    attachment,
+    recipientIds:
+      "recipientIds" in payload && Array.isArray(payload.recipientIds)
+        ? payload.recipientIds
+            .filter((id): id is string => typeof id === "string")
+            .slice(0, 30)
+        : [],
+    recipientNames:
+      "recipientNames" in payload && Array.isArray(payload.recipientNames)
+        ? payload.recipientNames
+            .filter((name): name is string => typeof name === "string")
+            .slice(0, 30)
+        : [],
+    timestamp: payload.timestamp,
+    type: ATTACHMENT_DATA_MESSAGE_TYPE,
+  };
+}
+
+function deliverAttachmentDataWireMessage(
+  conference: JitsiConferenceLike,
+  attachment: AttachmentWireMessage,
+  recipients: Array<{ id: string; name: string }>,
+  timestamp: number,
+) {
+  if (!conference.sendMessage) {
+    return false;
+  }
+
+  const payload: AttachmentDataWireMessage = {
+    attachment,
+    recipientIds: recipients.map((recipient) => recipient.id),
+    recipientNames: recipients.map((recipient) => recipient.name),
+    timestamp,
+    type: ATTACHMENT_DATA_MESSAGE_TYPE,
+  };
+  const targets =
+    recipients.length > 0
+      ? recipients.map((recipient) => recipient.id)
+      : [""];
+
+  try {
+    targets.forEach((participantId) => {
+      conference.sendMessage?.(payload, participantId, true);
+    });
+    return true;
+  } catch (caughtError) {
+    console.warn(
+      "Ninjitsi: attachment data channel unavailable; using chat transport",
+      caughtError,
+    );
+    return false;
+  }
 }
 
 function normalizeReplyReference(
@@ -455,6 +610,30 @@ async function createLocalTrack(
   }
 
   return track;
+}
+
+async function applyNoiseSuppression(
+  track: JitsiTrackLike,
+  serverUrl: string,
+) {
+  if (!track.setEffect) {
+    throw new Error("The audio track does not support effects.");
+  }
+
+  const effect = new JitsiNoiseSuppressionEffect(
+    new URL(
+      "/libs/noise-suppressor-worklet.min.js",
+      serverUrl,
+    ).toString(),
+  );
+
+  try {
+    await effect.prepare();
+    await track.setEffect(effect);
+  } catch (caughtError) {
+    effect.stopEffect();
+    throw caughtError;
+  }
 }
 
 function pickPreferredVideo(tracks: JitsiTrackLike[]) {
@@ -883,21 +1062,6 @@ export function useJitsiConference(roomName: string): ConferenceController {
                   : preferences.videoInputId;
               const track = await createLocalTrack(library, device, deviceId);
 
-              if (
-                device === "audio" &&
-                preferences.noiseSuppressionEnabled &&
-                track.setEffect
-              ) {
-                await track.setEffect(
-                  new JitsiNoiseSuppressionEffect(
-                    new URL(
-                      "/libs/noise-suppressor-worklet.min.js",
-                      serverUrl,
-                    ).toString(),
-                  ),
-                );
-              }
-
               if (startMuted) {
                 await track.mute();
               }
@@ -1243,8 +1407,6 @@ export function useJitsiConference(roomName: string): ConferenceController {
               conference.on(
                 conferenceEvents.ENDPOINT_MESSAGE_RECEIVED,
                 (rawParticipant, rawPayload) => {
-                  const privateMessage =
-                    parsePrivateChatWireMessage(rawPayload);
                   const senderId =
                     typeof rawParticipant === "string"
                       ? rawParticipant
@@ -1255,7 +1417,31 @@ export function useJitsiConference(roomName: string): ConferenceController {
                         ? rawParticipant.getId()
                         : null;
 
-                  if (!privateMessage || typeof senderId !== "string") {
+                  if (typeof senderId !== "string") {
+                    return;
+                  }
+
+                  const attachmentMessagePayload =
+                    parseAttachmentDataWireMessage(rawPayload);
+
+                  if (attachmentMessagePayload) {
+                    receiveChatText(
+                      senderId,
+                      attachmentMessage(
+                        attachmentMessagePayload.attachment,
+                      ),
+                      attachmentMessagePayload.timestamp,
+                      attachmentMessagePayload.recipientIds.length > 0,
+                      attachmentMessagePayload.recipientIds,
+                      attachmentMessagePayload.recipientNames,
+                    );
+                    return;
+                  }
+
+                  const privateMessage =
+                    parsePrivateChatWireMessage(rawPayload);
+
+                  if (!privateMessage) {
                     return;
                   }
 
@@ -1450,6 +1636,37 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 }
               }
 
+              const publishedAudioTrack = conference
+                .getLocalTracks("audio")
+                .find(Boolean);
+
+              if (
+                preferences.noiseSuppressionEnabled &&
+                publishedAudioTrack?.setEffect
+              ) {
+                setIsDeviceSwitchBusy(true);
+                setMediaBusy("audio", true);
+                try {
+                  await applyNoiseSuppression(
+                    publishedAudioTrack,
+                    serverUrl,
+                  );
+                } catch {
+                  noiseSuppressionEnabledRef.current = false;
+                  setNoiseSuppressionState(false);
+                  persistMediaPreferences();
+                  setError(
+                    ui(
+                      "Noise suppression could not start. The microphone remains on without it.",
+                      "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
+                    ),
+                  );
+                } finally {
+                  setMediaBusy("audio", false);
+                  setIsDeviceSwitchBusy(false);
+                }
+              }
+
               syncParticipants();
 
               if (failures.length > 0) {
@@ -1544,6 +1761,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     },
     [
       isDemo,
+      persistMediaPreferences,
       roomName,
       scheduleParticipantSync,
       scheduleFullReconnect,
@@ -1604,14 +1822,19 @@ export function useJitsiConference(roomName: string): ConferenceController {
         );
 
         if (noiseSuppressionEnabledRef.current && newTrack.setEffect) {
-          await newTrack.setEffect(
-            new JitsiNoiseSuppressionEffect(
-              new URL(
-                "/libs/noise-suppressor-worklet.min.js",
-                serverUrl,
-              ).toString(),
-            ),
-          );
+          try {
+            await applyNoiseSuppression(newTrack, serverUrl);
+          } catch {
+            noiseSuppressionEnabledRef.current = false;
+            setNoiseSuppressionState(false);
+            persistMediaPreferences();
+            setError(
+              ui(
+                "Noise suppression could not start. The microphone remains on without it.",
+                "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
+              ),
+            );
+          }
         }
 
         if (
@@ -1635,7 +1858,13 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setMediaBusy("audio", false);
       syncParticipants();
     }
-  }, [isDemo, serverUrl, setMediaBusy, syncParticipants]);
+  }, [
+    isDemo,
+    persistMediaPreferences,
+    serverUrl,
+    setMediaBusy,
+    syncParticipants,
+  ]);
 
   const toggleVideo = useCallback(async () => {
     if (isDemo) {
@@ -1742,6 +1971,25 @@ export function useJitsiConference(roomName: string): ConferenceController {
         .find((track) => track.getVideoType?.() === "desktop");
 
       if (currentDesktop) {
+        const cameraTrack = conference
+          .getLocalTracks("video")
+          .find((track) => track.getVideoType?.() !== "desktop");
+
+        setIsScreenSharing(false);
+        setParticipants((current) =>
+          current.map((participant) =>
+            participant.isLocal
+              ? {
+                  ...participant,
+                  isScreenSharing: false,
+                  videoMuted: cameraTrack
+                    ? cameraTrack.isMuted()
+                    : true,
+                  videoTrack: cameraTrack,
+                }
+              : participant,
+          ),
+        );
         desktopRemovalRef.current.add(currentDesktop);
         try {
           await conference.removeTrack(currentDesktop);
@@ -1761,6 +2009,25 @@ export function useJitsiConference(roomName: string): ConferenceController {
           }
 
           desktopRemovalRef.current.add(desktopTrack);
+          const cameraTrack = conference
+            .getLocalTracks("video")
+            .find((track) => track.getVideoType?.() !== "desktop");
+
+          setIsScreenSharing(false);
+          setParticipants((current) =>
+            current.map((participant) =>
+              participant.isLocal
+                ? {
+                    ...participant,
+                    isScreenSharing: false,
+                    videoMuted: cameraTrack
+                      ? cameraTrack.isMuted()
+                      : true,
+                    videoTrack: cameraTrack,
+                  }
+                : participant,
+            ),
+          );
           void (async () => {
             await conference
               .removeTrack(desktopTrack)
@@ -1782,6 +2049,20 @@ export function useJitsiConference(roomName: string): ConferenceController {
         await desktopTrack.dispose();
         return;
       }
+
+      setIsScreenSharing(true);
+      setParticipants((current) =>
+        current.map((participant) =>
+          participant.isLocal
+            ? {
+                ...participant,
+                isScreenSharing: true,
+                videoMuted: false,
+                videoTrack: desktopTrack,
+              }
+            : participant,
+        ),
+      );
 
       try {
         await conference.addTrack(desktopTrack);
@@ -1843,14 +2124,19 @@ export function useJitsiConference(roomName: string): ConferenceController {
           noiseSuppressionEnabledRef.current &&
           newTrack.setEffect
         ) {
-          await newTrack.setEffect(
-            new JitsiNoiseSuppressionEffect(
-              new URL(
-                "/libs/noise-suppressor-worklet.min.js",
-                serverUrl,
-              ).toString(),
-            ),
-          );
+          try {
+            await applyNoiseSuppression(newTrack, serverUrl);
+          } catch {
+            noiseSuppressionEnabledRef.current = false;
+            setNoiseSuppressionState(false);
+            persistMediaPreferences();
+            setError(
+              ui(
+                "Noise suppression could not start. The microphone remains on without it.",
+                "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
+              ),
+            );
+          }
         }
 
         if (
@@ -1937,16 +2223,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setMediaBusy("audio", true);
 
       try {
-        await audioTrack.setEffect(
-          enabled
-            ? new JitsiNoiseSuppressionEffect(
-                new URL(
-                  "/libs/noise-suppressor-worklet.min.js",
-                  serverUrl,
-                ).toString(),
-              )
-            : undefined,
-        );
+        if (enabled) {
+          await applyNoiseSuppression(audioTrack, serverUrl);
+        } else {
+          await audioTrack.setEffect(undefined);
+        }
       } catch {
         noiseSuppressionEnabledRef.current = !enabled;
         setNoiseSuppressionState(!enabled);
@@ -2165,32 +2446,40 @@ export function useJitsiConference(roomName: string): ConferenceController {
             ),
         );
 
-        deliverChatWireMessage(
-          conference!,
-          attachmentMessage({
+        const wireMessages: AttachmentWireMessage[] = [
+          {
             id: attachmentId,
             kind: "start",
             mimeType: attachment.mimeType,
             name: attachment.name,
             size: attachment.size,
             totalChunks: chunks.length,
-          }),
-          recipients,
-          timestamp,
-        );
+          },
+          ...chunks.map((data, index) => ({
+            data,
+            id: attachmentId,
+            index,
+            kind: "chunk" as const,
+          })),
+          {
+            id: attachmentId,
+            kind: "end",
+          },
+        ];
+        let sentThroughDataChannel = true;
 
-        for (let index = 0; index < chunks.length; index += 1) {
-          deliverChatWireMessage(
-            conference!,
-            attachmentMessage({
-              data: chunks[index],
-              id: attachmentId,
-              index,
-              kind: "chunk",
-            }),
-            recipients,
-            timestamp,
-          );
+        for (let index = 0; index < wireMessages.length; index += 1) {
+          if (
+            !deliverAttachmentDataWireMessage(
+              conference!,
+              wireMessages[index],
+              recipients,
+              timestamp,
+            )
+          ) {
+            sentThroughDataChannel = false;
+            break;
+          }
 
           if (index > 0 && index % 20 === 0) {
             await new Promise<void>((resolve) =>
@@ -2199,15 +2488,29 @@ export function useJitsiConference(roomName: string): ConferenceController {
           }
         }
 
-        deliverChatWireMessage(
-          conference!,
-          attachmentMessage({
-            id: attachmentId,
-            kind: "end",
-          }),
-          recipients,
-          timestamp,
-        );
+        if (!sentThroughDataChannel) {
+          const fallbackId = `${attachmentId}-fallback`;
+
+          for (let index = 0; index < wireMessages.length; index += 1) {
+            const wireMessage = wireMessages[index];
+
+            deliverChatWireMessage(
+              conference!,
+              attachmentMessage({
+                ...wireMessage,
+                id: fallbackId,
+              }),
+              recipients,
+              timestamp,
+            );
+
+            if (index > 0 && index % 20 === 0) {
+              await new Promise<void>((resolve) =>
+                window.setTimeout(resolve, 0),
+              );
+            }
+          }
+        }
       } catch {
         setError(
           ui(

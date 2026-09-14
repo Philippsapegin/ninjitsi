@@ -14,6 +14,9 @@ call.example.com {
 }
 
 jitsi.example.com {
+	encode zstd gzip
+	@noise_suppressor path /libs/noise-suppressor-worklet.min.js
+	header @noise_suppressor Cache-Control "public, max-age=86400"
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		-Server
