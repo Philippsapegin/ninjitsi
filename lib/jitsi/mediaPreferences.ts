@@ -1,5 +1,6 @@
 export interface MediaPreferences {
   audioInputId: string;
+  audioOutputId: string;
   noiseSuppressionEnabled: boolean;
   videoInputId: string;
 }
@@ -8,6 +9,7 @@ const MEDIA_PREFERENCES_KEY = "ninjitsi.mediaPreferences";
 
 export const DEFAULT_MEDIA_PREFERENCES: MediaPreferences = {
   audioInputId: "",
+  audioOutputId: "",
   noiseSuppressionEnabled: false,
   videoInputId: "",
 };
@@ -25,6 +27,8 @@ export function readMediaPreferences(): MediaPreferences {
     return {
       audioInputId:
         typeof parsed.audioInputId === "string" ? parsed.audioInputId : "",
+      audioOutputId:
+        typeof parsed.audioOutputId === "string" ? parsed.audioOutputId : "",
       noiseSuppressionEnabled: Boolean(parsed.noiseSuppressionEnabled),
       videoInputId:
         typeof parsed.videoInputId === "string" ? parsed.videoInputId : "",

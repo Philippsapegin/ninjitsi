@@ -31,7 +31,9 @@
   right: 0;
   display: flex;
   width: 328px;
+  max-height: calc(100dvh - 98px);
   padding: 18px;
+  overflow-y: auto;
   flex-direction: column;
   gap: 17px;
   background: rgba(18, 22, 27, 0.98);
@@ -39,6 +41,8 @@
   border-radius: 14px;
   box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(20px);
+  scrollbar-color: var(--surface-soft) transparent;
+  scrollbar-width: thin;
 }
 
 .panel header {
@@ -124,6 +128,30 @@
   right: 12px;
   pointer-events: none;
   color: var(--text-faint);
+}
+
+.selectField > small {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.outputPicker {
+  align-self: flex-start;
+  padding: 0;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.outputPicker:hover {
+  text-decoration: underline;
+}
+
+.outputPicker:disabled {
+  cursor: wait;
+  opacity: 0.5;
 }
 
 .toggleRow {

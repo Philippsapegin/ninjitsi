@@ -44,65 +44,144 @@ export function VideoTrack({ isLocal, track }: VideoTrackProps) {
 }
 
 interface AudioTrackProps {
+  outputDeviceId: string;
   participantId: string;
   track: JitsiTrackLike;
   volume: number;
 }
 
 export function AudioTrack({
+  outputDeviceId,
   participantId,
   track,
   volume,
 }: AudioTrackProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const outputRef = useRef<HTMLAudioElement>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  const outputModeRef = useRef<"webaudio" | "element">("element");
+  const outputDeviceIdRef = useRef(outputDeviceId);
+  const appliedOutputDeviceIdRef = useRef(outputDeviceId);
   const volumeRef = useRef(volume);
 
   useEffect(() => {
-    const element = audioRef.current;
+    outputDeviceIdRef.current = outputDeviceId;
+  }, [outputDeviceId]);
 
-    if (!element) {
+  useEffect(() => {
+    const element = audioRef.current;
+    const output = outputRef.current;
+
+    if (!element || !output) {
       return;
     }
 
     let cancelled = false;
     let source: MediaElementAudioSourceNode | null = null;
     let gain: GainNode | null = null;
+    let destination: MediaStreamAudioDestinationNode | null = null;
+    let context: AudioContext | null = null;
 
-    void Promise.resolve(track.attach(element)).then(() => {
+    try {
+      context = getAudioContext();
+      gain = context.createGain();
+      destination = context.createMediaStreamDestination();
+      source = sourceRef.current ?? context.createMediaElementSource(element);
+      sourceRef.current = source;
+      source.connect(gain);
+      gain.connect(destination);
+      gain.gain.value = volumeRef.current;
+      gainRef.current = gain;
+      output.srcObject = destination.stream;
+      outputModeRef.current = "webaudio";
+      output.dataset.audioOutput = "remote";
+      delete element.dataset.audioOutput;
+      element.dataset.audioGain = "webaudio";
+    } catch {
+      source?.disconnect();
+      gain?.disconnect();
+      if (source && gain && context) {
+        source.connect(gain);
+        gain.connect(context.destination);
+        gain.gain.value = volumeRef.current;
+        gainRef.current = gain;
+        element.dataset.audioGain = "webaudio";
+      } else {
+        element.dataset.audioGain = "element";
+        element.volume = Math.min(1, Math.max(0, volumeRef.current));
+      }
+      outputModeRef.current = "element";
+      element.dataset.audioOutput = "remote";
+      delete output.dataset.audioOutput;
+    }
+
+    const activeOutput =
+      outputModeRef.current === "webaudio" ? output : element;
+
+    const start = async () => {
+      if ("setSinkId" in activeOutput) {
+        try {
+          await activeOutput.setSinkId(outputDeviceIdRef.current);
+        } catch {
+          await activeOutput.setSinkId("").catch(() => undefined);
+        }
+      }
+
       if (cancelled) {
         return;
       }
 
       try {
-        const context = getAudioContext();
-        gain = context.createGain();
-
-        source =
-          sourceRef.current ?? context.createMediaElementSource(element);
-        sourceRef.current = source;
-        source.connect(gain);
-        gain.connect(context.destination);
-        gain.gain.value = volumeRef.current;
-        gainRef.current = gain;
-        element.volume = 1;
-        element.dataset.audioGain = "webaudio";
-        void context.resume();
+        await track.attach(element);
       } catch {
-        element.dataset.audioGain = "element";
-        element.volume = Math.min(1, Math.max(0, volumeRef.current));
+        return;
       }
-    });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (context) {
+        await context.resume().catch(() => undefined);
+      }
+      if (outputModeRef.current === "webaudio") {
+        await output.play().catch(() => undefined);
+      }
+    };
+
+    void start();
 
     return () => {
       cancelled = true;
       gainRef.current = null;
       source?.disconnect();
       gain?.disconnect();
+      output.pause();
+      output.srcObject = null;
       track.detach(element);
     };
   }, [track]);
+
+  useEffect(() => {
+    if (appliedOutputDeviceIdRef.current === outputDeviceId) {
+      return;
+    }
+    appliedOutputDeviceIdRef.current = outputDeviceId;
+
+    const activeOutput =
+      outputModeRef.current === "webaudio"
+        ? outputRef.current
+        : audioRef.current;
+
+    if (!activeOutput || !("setSinkId" in activeOutput)) {
+      return;
+    }
+
+    void activeOutput.setSinkId(outputDeviceId).catch(() => {
+      void activeOutput.setSinkId("").catch(() => undefined);
+    });
+  }, [outputDeviceId]);
 
   useEffect(() => {
     const element = audioRef.current;
@@ -121,12 +200,20 @@ export function AudioTrack({
   }, [volume]);
 
   return (
-    <audio
-      autoPlay
-      data-audio-source="remote"
-      data-output-volume={volume}
-      data-participant-audio={participantId}
-      ref={audioRef}
-    />
+    <>
+      <audio
+        autoPlay
+        data-audio-source="remote"
+        data-output-volume={volume}
+        data-participant-audio={participantId}
+        ref={audioRef}
+      />
+      <audio
+        autoPlay
+        data-audio-sink="remote"
+        data-participant-audio={participantId}
+        ref={outputRef}
+      />
+    </>
   );
 }

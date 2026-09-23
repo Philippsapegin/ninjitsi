@@ -489,20 +489,32 @@ try {
         elements.map((element) => ({
           participantId: element.dataset.participantAudio,
           source: element.dataset.audioSource,
+          sink: element.dataset.audioSink,
         })),
     );
 
     if (
-      audioRouting.length !== 1 ||
+      audioRouting.length !== 2 ||
       audioRouting.some(
-        ({ participantId, source }) =>
-          !participantId || source !== "remote",
-      )
+        ({ participantId, source, sink }) =>
+          !participantId || (source !== "remote" && sink !== "remote"),
+      ) ||
+      audioRouting.filter(({ source }) => source === "remote").length !== 1 ||
+      audioRouting.filter(({ sink }) => sink === "remote").length !== 1 ||
+      audioRouting[0].participantId !== audioRouting[1].participantId
     ) {
       throw new Error(
         `${clientName} client attached a local or unidentified audio stream: ${JSON.stringify(audioRouting)}`,
       );
     }
+
+    await clientPage.waitForFunction(() => {
+      const sink = document.querySelector('[data-audio-sink="remote"]');
+      return sink instanceof HTMLAudioElement &&
+        sink.srcObject instanceof MediaStream &&
+        sink.srcObject.getAudioTracks().length === 1 &&
+        !sink.paused;
+    });
   }
 
   await page
@@ -970,11 +982,55 @@ try {
     .getByLabel("Выбрать камеру")
     .locator("option")
     .count();
+  const audioOutputSelect = settingsDialog.getByLabel("Выбрать вывод звука");
+  const audioOutputOptions = await audioOutputSelect.locator("option").count();
 
-  if (microphoneOptions < 1 || cameraOptions < 1) {
+  if (microphoneOptions < 1 || cameraOptions < 1 || audioOutputOptions < 1) {
     throw new Error(
-      `Настройки не показали fake-устройства: microphones=${microphoneOptions}, cameras=${cameraOptions}`,
+      `Настройки не показали устройства: microphones=${microphoneOptions}, cameras=${cameraOptions}, outputs=${audioOutputOptions}`,
     );
+  }
+
+  const diagnostics = settingsDialog.getByRole("button", {
+    name: "Диагностика потоков",
+  });
+  if ((await diagnostics.getAttribute("aria-expanded")) !== "false") {
+    throw new Error("Диагностика должна быть свёрнута по умолчанию");
+  }
+  await diagnostics.click();
+  await settingsDialog.getByRole("meter", { name: "Уровень микрофона" }).waitFor();
+  if (await settingsDialog.getByText("Поток активен").count() !== 2) {
+    throw new Error("Локальные аудио- и видеопотоки не активны в диагностике");
+  }
+  await settingsDialog.locator("video").waitFor();
+  await settingsDialog
+    .getByRole("button", { name: "Закрыть настройки" })
+    .click();
+  await page.getByRole("button", { name: "Настройки" }).click();
+  if ((await diagnostics.getAttribute("aria-expanded")) !== "true") {
+    throw new Error("Открытое состояние диагностики не сохранилось");
+  }
+  await diagnostics.click();
+
+  const firstOutputId = await audioOutputSelect.locator("option").evaluateAll(
+    (options) => options.map((option) => option.value).find(Boolean) ?? "",
+  );
+  if (firstOutputId && await audioOutputSelect.isEnabled()) {
+    await audioOutputSelect.selectOption(firstOutputId);
+    await page.waitForFunction(
+      (deviceId) => {
+        const sink = document.querySelector('[data-audio-output="remote"]');
+        return sink instanceof HTMLAudioElement && sink.sinkId === deviceId;
+      },
+      firstOutputId,
+      { timeout: 15_000 },
+    );
+    const savedOutputId = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("ninjitsi.mediaPreferences") ?? "{}").audioOutputId,
+    );
+    if (savedOutputId !== firstOutputId) {
+      throw new Error("Устройство вывода звука не сохранилось");
+    }
   }
 
   const noiseSuppression = settingsDialog.getByRole("switch", {
@@ -1191,7 +1247,7 @@ try {
           messageOnlyTo:
             "clicked sender only and recipient reset passed",
           connectionStats: "conference RTT passed",
-          deviceSettings: "enumeration passed",
+          deviceSettings: "input/output enumeration, output routing and feed diagnostics passed",
           gridDuringChat: "two-participant row remained stable",
           microphone: "toggle passed",
           microphoneDefault: "explicit default device passed",

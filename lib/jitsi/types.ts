@@ -16,6 +16,7 @@ export interface JitsiTrackLike {
   dispose: () => Promise<void>;
   getDeviceId?: () => string;
   getParticipantId?: () => string;
+  getTrack?: () => MediaStreamTrack | undefined;
   getType: () => MediaType;
   getVideoType?: () => "camera" | "desktop" | undefined;
   isLocal?: () => boolean;

@@ -46,6 +46,7 @@ export interface JoinOptions {
 
 interface ConferenceController {
   audioInputId: string;
+  audioOutputId: string;
   chatMessages: ChatMessage[];
   error: string | null;
   isAudioBusy: boolean;
@@ -71,6 +72,7 @@ interface ConferenceController {
     replyTo?: ChatReplyReference,
   ) => void;
   setAudioInputDevice: (deviceId: string) => Promise<void>;
+  setAudioOutputDevice: (deviceId: string) => Promise<void>;
   setNoiseSuppressionEnabled: (enabled: boolean) => Promise<void>;
   setVideoInputDevice: (deviceId: string) => Promise<void>;
   setVideoBackgroundEnabled: (enabled: boolean) => Promise<void>;
@@ -910,6 +912,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [localAudioLevel, setLocalAudioLevel] = useState(0);
   const [audioInputId, setAudioInputIdState] = useState("");
+  const [audioOutputId, setAudioOutputIdState] = useState("");
   const [videoInputId, setVideoInputIdState] = useState("");
   const [noiseSuppressionEnabled, setNoiseSuppressionState] = useState(false);
   const [noiseSuppressionSupported, setNoiseSuppressionSupported] =
@@ -942,6 +945,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const screenShareBusyRef = useRef(false);
   const audioLevelTracksRef = useRef(new WeakSet<JitsiTrackLike>());
   const audioInputIdRef = useRef("");
+  const audioOutputIdRef = useRef("");
   const videoInputIdRef = useRef("");
   const noiseSuppressionEnabledRef = useRef(false);
   const incomingAttachmentsRef = useRef(
@@ -973,10 +977,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
       const preferences = readMediaPreferences();
 
       audioInputIdRef.current = preferences.audioInputId;
+      audioOutputIdRef.current = preferences.audioOutputId;
       videoInputIdRef.current = preferences.videoInputId;
       noiseSuppressionEnabledRef.current =
         preferences.noiseSuppressionEnabled;
       setAudioInputIdState(preferences.audioInputId);
+      setAudioOutputIdState(preferences.audioOutputId);
       setVideoInputIdState(preferences.videoInputId);
       setNoiseSuppressionState(preferences.noiseSuppressionEnabled);
       setNoiseSuppressionSupported(isNoiseSuppressionSupported());
@@ -986,6 +992,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const persistMediaPreferences = useCallback(() => {
     saveMediaPreferences({
       audioInputId: audioInputIdRef.current,
+      audioOutputId: audioOutputIdRef.current,
       noiseSuppressionEnabled: noiseSuppressionEnabledRef.current,
       videoInputId: videoInputIdRef.current,
     });
@@ -1301,10 +1308,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
         }
 
         audioInputIdRef.current = preferences.audioInputId;
+        audioOutputIdRef.current = preferences.audioOutputId;
         videoInputIdRef.current = preferences.videoInputId;
         noiseSuppressionEnabledRef.current =
           preferences.noiseSuppressionEnabled;
         setAudioInputIdState(preferences.audioInputId);
+        setAudioOutputIdState(preferences.audioOutputId);
         setVideoInputIdState(preferences.videoInputId);
         setNoiseSuppressionState(preferences.noiseSuppressionEnabled);
         libraryRef.current = library;
@@ -2642,6 +2651,31 @@ export function useJitsiConference(roomName: string): ConferenceController {
     [replaceInputTrack],
   );
 
+  const setAudioOutputDevice = useCallback(
+    async (deviceId: string) => {
+      if (!("setSinkId" in HTMLMediaElement.prototype)) {
+        return;
+      }
+
+      try {
+        const probe = document.createElement("audio");
+        await probe.setSinkId(deviceId);
+        audioOutputIdRef.current = deviceId;
+        setAudioOutputIdState(deviceId);
+        persistMediaPreferences();
+        setError(null);
+      } catch {
+        setError(
+          ui(
+            "This audio output could not be selected. Check its permission or connection.",
+            "Не удалось выбрать это устройство вывода звука. Проверьте разрешение или подключение.",
+          ),
+        );
+      }
+    },
+    [persistMediaPreferences],
+  );
+
   const setVideoInputDevice = useCallback(
     (deviceId: string) => replaceInputTrack("video", deviceId),
     [replaceInputTrack],
@@ -3115,6 +3149,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   return {
     audioInputId,
+    audioOutputId,
     chatMessages,
     error,
     isAudioBusy,
@@ -3133,6 +3168,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     sendChatAttachment,
     sendChatMessage,
     setAudioInputDevice,
+    setAudioOutputDevice,
     setNoiseSuppressionEnabled,
     setVideoBackgroundEnabled,
     setVideoInputDevice,

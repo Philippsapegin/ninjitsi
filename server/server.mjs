@@ -235,7 +235,7 @@ function applySecurityHeaders(response) {
       `worker-src 'self' blob: ${jitsiSources.join(" ")}`.trim(),
     ].join("; "),
   );
-  response.setHeader("Permissions-Policy", "camera=(self), display-capture=(self), fullscreen=(self), microphone=(self)");
+  response.setHeader("Permissions-Policy", "camera=(self), display-capture=(self), fullscreen=(self), microphone=(self), speaker-selection=(self)");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");

@@ -728,6 +728,7 @@ Profiles and avatars remain in that browser's local storage; optional camera-off
 - **Local profiles:** reusable names, avatars, tile colors, and optional 16:9 camera-off backgrounds stored in the client's browser. Backgrounds accept JPG, PNG, or GIF files up to 3 MB.
 - **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage.
 - **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API.
+- **Device controls and feed diagnostics:** choose microphone, camera, and audio output; an optional panel shows local microphone activity and a video preview. Audio-output selection depends on browser support and may require a browser permission prompt.
 - **Private messages and replies:** text and attachments can target selected participants; private replies retain their recipient set.
 - **Personal volume:** every remote participant can be adjusted locally from 0% to 200%; local microphone audio is never attached to local output.
 - **Chat attachments:** drag-and-drop or file-picker delivery up to 2 MB; images open in an in-app preview and transparent PNGs retain alpha.
@@ -803,7 +804,7 @@ exercises the server media path. The media suite verifies token-only admission,
 publication and reception of camera/microphone tracks, absence of local audio
 playback, screen sharing, private chat isolation, replies, attachments, stable
 grid behavior, per-participant volume, connection statistics, stage mode,
-device switching, noise suppression, and transport recovery. A production
+device switching (including audio output), local feed diagnostics, noise suppression, and transport recovery. A production
 acceptance run still needs real devices on at least two physical networks; a
 browser on the Docker host cannot prove NAT, firewall, TURN, acoustic, or
 six-hour Internet behavior.

@@ -431,10 +431,14 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           </button>
           <SettingsPanel
             audioInputId={conference.audioInputId}
+            audioOutputId={conference.audioOutputId}
             busy={conference.isDeviceSwitchBusy}
+            localAudioLevel={conference.localAudioLevel}
+            localParticipant={conference.participants.find((participant) => participant.isLocal)}
             noiseSuppressionEnabled={conference.noiseSuppressionEnabled}
             noiseSuppressionSupported={conference.noiseSuppressionSupported}
             onAudioInputChange={conference.setAudioInputDevice}
+            onAudioOutputChange={conference.setAudioOutputDevice}
             onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
             onVideoBackgroundChange={
               conference.setVideoBackgroundEnabled
@@ -443,6 +447,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             roomPassword={
               joinDetails.isCreator ? joinDetails.password : null
             }
+            status={conference.status}
             videoBackgroundAvailable={conference.videoBackgroundAvailable}
             videoBackgroundEnabled={conference.videoBackgroundEnabled}
             videoInputId={conference.videoInputId}
@@ -502,6 +507,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       />
 
       <AudioSinks
+        outputDeviceId={conference.audioOutputId}
         participantVolumes={participantVolumes}
         participants={conference.participants}
       />

@@ -10,22 +10,30 @@ import {
   LockKeyhole,
   Mic,
   Settings,
+  Speaker,
   Sparkles,
   X,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import type { MeetingStatus, ParticipantView } from "@/lib/jitsi/types";
+import { FeedDiagnostics } from "./FeedDiagnostics";
 import styles from "./SettingsPanel.module.css";
 
 interface SettingsPanelProps {
   audioInputId: string;
+  audioOutputId: string;
   busy: boolean;
+  localAudioLevel: number;
+  localParticipant?: ParticipantView;
   noiseSuppressionEnabled: boolean;
   noiseSuppressionSupported: boolean;
   onAudioInputChange: (deviceId: string) => Promise<void>;
+  onAudioOutputChange: (deviceId: string) => Promise<void>;
   onNoiseSuppressionChange: (enabled: boolean) => Promise<void>;
   onVideoInputChange: (deviceId: string) => Promise<void>;
   onVideoBackgroundChange: (enabled: boolean) => Promise<void>;
   roomPassword: string | null;
+  status: MeetingStatus;
   videoBackgroundAvailable: boolean;
   videoBackgroundEnabled: boolean;
   videoInputId: string;
@@ -41,14 +49,19 @@ function deviceLabel(
 
 export function SettingsPanel({
   audioInputId,
+  audioOutputId,
   busy,
+  localAudioLevel,
+  localParticipant,
   noiseSuppressionEnabled,
   noiseSuppressionSupported,
   onAudioInputChange,
+  onAudioOutputChange,
   onNoiseSuppressionChange,
   onVideoInputChange,
   onVideoBackgroundChange,
   roomPassword,
+  status,
   videoBackgroundAvailable,
   videoBackgroundEnabled,
   videoInputId,
@@ -57,6 +70,14 @@ export function SettingsPanel({
   const [open, setOpen] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputSupported] = useState(
+    () => typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype,
+  );
+  const [audioOutputPickerSupported] = useState(
+    () => typeof navigator !== "undefined" &&
+      Boolean(navigator.mediaDevices) &&
+      "selectAudioOutput" in navigator.mediaDevices,
+  );
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -107,6 +128,26 @@ export function SettingsPanel({
     (device) => device.kind === "audioinput",
   );
   const cameras = devices.filter((device) => device.kind === "videoinput");
+  const audioOutputs = devices.filter(
+    (device) => device.kind === "audiooutput" && device.deviceId !== "default",
+  );
+
+  const chooseAudioOutput = async () => {
+    const mediaDevices = navigator.mediaDevices as MediaDevices & {
+      selectAudioOutput?: () => Promise<MediaDeviceInfo>;
+    };
+
+    try {
+      const device = await mediaDevices.selectAudioOutput?.();
+      if (!device) {
+        return;
+      }
+      await onAudioOutputChange(device.deviceId);
+      setDevices(await mediaDevices.enumerateDevices().catch(() => devices));
+    } catch {
+      // Closing the browser's output picker keeps the current device.
+    }
+  };
 
   return (
     <div className={styles.root} ref={panelRef}>
@@ -190,6 +231,60 @@ export function SettingsPanel({
               </select>
               <ChevronDown size={15} />
             </div>
+          </label>
+
+          <label className={styles.selectField}>
+            <span>
+              <Speaker size={14} />
+              {tr("Audio output", "Вывод звука")}
+            </span>
+            <div>
+              <select
+                aria-label={tr("Select audio output", "Выбрать вывод звука")}
+                disabled={busy || !audioOutputSupported}
+                onChange={(event) =>
+                  void onAudioOutputChange(event.target.value)
+                }
+                value={audioOutputId}
+              >
+                <option value="">
+                  {tr("System default", "Системный по умолчанию")}
+                </option>
+                {audioOutputId && !audioOutputs.some(
+                  (device) => device.deviceId === audioOutputId,
+                ) && (
+                  <option value={audioOutputId}>
+                    {tr("Device unavailable", "Устройство недоступно")}
+                  </option>
+                )}
+                {audioOutputs.map((device, index) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {deviceLabel(
+                      device,
+                      index,
+                      tr("Speaker", "Динамик"),
+                    )}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={15} />
+            </div>
+            {!audioOutputSupported && (
+              <small>{tr(
+                "Not supported by this browser",
+                "Не поддерживается браузером",
+              )}</small>
+            )}
+            {audioOutputSupported && audioOutputPickerSupported && (
+              <button
+                className={styles.outputPicker}
+                disabled={busy}
+                onClick={() => void chooseAudioOutput()}
+                type="button"
+              >
+                {tr("Choose another output…", "Выбрать другой выход…")}
+              </button>
+            )}
           </label>
 
           <div className={styles.toggleRow}>
@@ -319,6 +414,12 @@ export function SettingsPanel({
               </div>
             </label>
           )}
+
+          <FeedDiagnostics
+            audioLevel={localAudioLevel}
+            localParticipant={localParticipant}
+            status={status}
+          />
         </section>
       )}
 
