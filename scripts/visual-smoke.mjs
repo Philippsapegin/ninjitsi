@@ -28,6 +28,14 @@ const landingScreenshotPath = join(
   tmpdir(),
   `ninjitsi-landing-${Date.now()}.png`,
 );
+const mobileLandingScreenshotPath = join(
+  tmpdir(),
+  `ninjitsi-mobile-landing-${Date.now()}.png`,
+);
+const mobileMeetingScreenshotPath = join(
+  tmpdir(),
+  `ninjitsi-mobile-meeting-${Date.now()}.png`,
+);
 const volumeScreenshotPath = join(
   tmpdir(),
   `ninjitsi-volume-${Date.now()}.png`,
@@ -233,6 +241,52 @@ try {
     landingResults.push({ pageMetrics, viewport });
   }
 
+  const mobileLandingResults = [];
+  for (const viewport of [
+    { width: 320, height: 640 },
+    { width: 390, height: 844 },
+    { width: 844, height: 390 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    const metrics = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      formWidth: document.querySelector("form")?.getBoundingClientRect().width,
+      inputFontSize: Number.parseFloat(getComputedStyle(document.querySelector("input")).fontSize),
+    }));
+
+    if (
+      metrics.scrollWidth > metrics.clientWidth ||
+      (metrics.formWidth ?? 0) > metrics.clientWidth ||
+      metrics.inputFontSize < 16
+    ) {
+      throw new Error(`Mobile landing overflow or tiny input: ${JSON.stringify({ metrics, viewport })}`);
+    }
+    if (viewport.width === 390) {
+      await page.screenshot({ path: mobileLandingScreenshotPath, fullPage: true });
+    }
+    if (viewport.width === 320) {
+      const colorButton = page.getByRole("button", { name: "Цвет плитки" });
+      await colorButton.click();
+      const colorPopover = page.getByRole("dialog", { name: "Выбор цвета плитки" });
+      const popoverBounds = await colorPopover.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          viewportWidth: document.documentElement.clientWidth,
+        };
+      });
+      if (popoverBounds.left < 0 || popoverBounds.right > popoverBounds.viewportWidth) {
+        throw new Error(`Mobile color picker overflow: ${JSON.stringify(popoverBounds)}`);
+      }
+      await colorButton.click();
+    }
+    mobileLandingResults.push(viewport);
+  }
+
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await page.screenshot({ path: landingScreenshotPath });
@@ -256,6 +310,21 @@ try {
   await page.goto(`${baseUrl}/room/${room.code}`, {
     waitUntil: "networkidle",
   });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const joinOverlayMetrics = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    cardWidth: document.querySelector("form")?.parentElement?.getBoundingClientRect().width,
+    inputFontSize: Number.parseFloat(getComputedStyle(document.querySelector("input")).fontSize),
+  }));
+  if (
+    joinOverlayMetrics.scrollWidth > joinOverlayMetrics.clientWidth ||
+    (joinOverlayMetrics.cardWidth ?? 0) > joinOverlayMetrics.clientWidth ||
+    joinOverlayMetrics.inputFontSize < 16
+  ) {
+    throw new Error(`Mobile join overlay overflow or tiny input: ${JSON.stringify(joinOverlayMetrics)}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByLabel("Your name").fill("Visual Tester");
   await page.getByRole("button", { name: "Join room" }).click();
   const videoTiles = page.locator("[data-video-tile]");
@@ -344,6 +413,106 @@ try {
 
     viewportResults.push({ pageMetrics, tileMetrics, viewport });
   }
+
+  const mobileMeetingResults = [];
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 844, height: 390 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.waitForTimeout(400);
+    const layout = await page.evaluate(() => {
+      const tiles = Array.from(document.querySelectorAll("[data-video-tile]"));
+      const chat = document.querySelector("aside")?.getBoundingClientRect();
+      const controls = document.querySelector("footer")?.getBoundingClientRect();
+      const tileBounds = tiles.map((tile) => tile.getBoundingClientRect());
+      const rowCounts = new Map();
+      for (const bounds of tileBounds) {
+        const row = Math.round(bounds.top);
+        rowCounts.set(row, (rowCounts.get(row) ?? 0) + 1);
+      }
+
+      return {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        chat: chat && { bottom: chat.bottom, top: chat.top, width: chat.width },
+        controlsTop: controls?.top,
+        maxTilesPerRow: Math.max(...rowCounts.values()),
+        tileRatios: tileBounds.map((bounds) => bounds.width / bounds.height),
+      };
+    });
+    if (
+      layout.scrollWidth > layout.clientWidth ||
+      layout.maxTilesPerRow > 2 ||
+      layout.tileRatios.length !== 7 ||
+      layout.tileRatios.some((ratio) => Math.abs(ratio - 16 / 9) > 0.001) ||
+      !layout.chat ||
+      Math.abs(layout.chat.bottom - (layout.controlsTop ?? 0)) > 1 ||
+      Math.abs(layout.chat.width - layout.clientWidth) > 1
+    ) {
+      throw new Error(`Invalid mobile meeting layout: ${JSON.stringify({ layout, viewport })}`);
+    }
+    if (viewport.width === 390) {
+      await page.screenshot({ path: mobileMeetingScreenshotPath });
+      const settingsButton = page.getByRole("button", { name: "Настройки" });
+      await settingsButton.click();
+      const settingsDialog = page.getByRole("dialog", { name: "Настройки устройств" });
+      const settingsLayout = await settingsDialog.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const input = element.querySelector("select");
+
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+          fontSize: input ? Number.parseFloat(getComputedStyle(input).fontSize) : 0,
+          viewportWidth: document.documentElement.clientWidth,
+          viewportHeight: document.documentElement.clientHeight,
+        };
+      });
+      if (
+        settingsLayout.left < 0 ||
+        settingsLayout.right > settingsLayout.viewportWidth ||
+        settingsLayout.bottom > settingsLayout.viewportHeight ||
+        settingsLayout.fontSize < 16
+      ) {
+        throw new Error(`Mobile settings overflow: ${JSON.stringify(settingsLayout)}`);
+      }
+      await settingsDialog.getByRole("button", { name: "Закрыть настройки" }).click();
+      await page.getByRole("button", { name: "Свернуть чат" }).click();
+      await page.waitForTimeout(260);
+      const collapsedChatHeight = await page.getByRole("complementary").evaluate(
+        (element) => element.getBoundingClientRect().height,
+      );
+      if (Math.abs(collapsedChatHeight - 44) > 1) {
+        throw new Error(`Mobile chat did not collapse to its tab: ${collapsedChatHeight}`);
+      }
+      await page.getByRole("button", { name: "Развернуть чат" }).click();
+      await page.getByRole("button", { name: /Показать на сцене/ }).first().click();
+      const sceneLayout = await page.locator("[data-video-tile]").evaluateAll((tiles) => {
+        const bounds = tiles.map((tile) => tile.getBoundingClientRect());
+        const rowCounts = new Map();
+        for (const tile of bounds.slice(1)) {
+          const row = Math.round(tile.top);
+          rowCounts.set(row, (rowCounts.get(row) ?? 0) + 1);
+        }
+        return {
+          mainWidth: bounds[0]?.width,
+          maxStripPerRow: Math.max(...rowCounts.values()),
+          stripWidth: bounds[1]?.width,
+        };
+      });
+      if (sceneLayout.maxStripPerRow > 2 || sceneLayout.mainWidth <= sceneLayout.stripWidth) {
+        throw new Error(`Mobile scene layout is invalid: ${JSON.stringify(sceneLayout)}`);
+      }
+      await page.getByRole("button", { name: /Вернуть сетку/ }).click();
+    }
+    mobileMeetingResults.push(viewport);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.waitForTimeout(300);
 
   const chatSidebar = page.getByRole("complementary");
 
@@ -752,8 +921,12 @@ try {
         screenshotPath,
         chatScreenshotPath,
         landingScreenshotPath,
+        mobileLandingScreenshotPath,
+        mobileMeetingScreenshotPath,
         volumeScreenshotPath,
         landing: landingResults.map(({ viewport }) => viewport),
+        mobileLanding: mobileLandingResults,
+        mobileMeeting: mobileMeetingResults,
         scenarios: viewportResults.map(
           ({ tileMetrics, viewport }) => ({
             tileCount: tileMetrics.length,

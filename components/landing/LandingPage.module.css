@@ -608,3 +608,100 @@
     grid-template-columns: minmax(0, 1fr) 126px;
   }
 }
+
+@media (max-width: 1039px) {
+  .page {
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .header {
+    width: calc(100% - 32px);
+    height: 62px;
+  }
+
+  .hero {
+    display: flex;
+    width: calc(100% - 32px);
+    height: auto;
+    padding: 25px 0 42px;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .copy {
+    width: 100%;
+    max-width: none;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  .copy h1 {
+    font-size: clamp(34px, 9vw, 48px);
+    line-height: 1;
+    white-space: normal;
+  }
+
+  .form {
+    margin-top: 23px;
+    padding: 16px;
+    gap: 15px;
+  }
+
+  .modeSwitch button,
+  .field > span,
+  .primaryButton,
+  .assurances {
+    font-size: 14px;
+  }
+
+  .field input {
+    height: 48px;
+    font-size: 16px;
+  }
+
+  .passwordLabel em {
+    font-size: 12px;
+  }
+
+  .assurances {
+    flex-wrap: wrap;
+    gap: 10px 18px;
+  }
+
+  .previewWindow {
+    padding: 13px;
+  }
+
+  .previewWorkspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .previewGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .previewChat {
+    min-height: 145px;
+    margin-top: 8px;
+  }
+
+  .previewChat > header strong,
+  .previewMessages strong,
+  .previewMessages p,
+  .previewComposer {
+    font-size: 10px;
+  }
+
+  .previewName {
+    font-size: 12px;
+  }
+
+  .previewCaption {
+    font-size: 13px;
+  }
+}

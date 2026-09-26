@@ -21,12 +21,29 @@ function calculateGrid(
   height: number,
   itemCount: number,
   topologyWidth = width,
+  mobile = false,
 ): GridMetrics {
   if (!width || !height || !itemCount) {
     return EMPTY_METRICS;
   }
 
   const gap = itemCount > 12 ? 8 : itemCount > 6 ? 10 : 12;
+
+  if (mobile) {
+    const columns = itemCount <= 2 ? 1 : 2;
+    const tileWidth = Math.max(
+      0,
+      Math.floor((width - gap * (columns - 1)) / columns),
+    );
+
+    return {
+      columns,
+      gap,
+      tileHeight: tileWidth * (9 / 16),
+      tileWidth,
+    };
+  }
+
   let best = EMPTY_METRICS;
   let bestArea = 0;
   const layoutWidth = Math.max(width, topologyWidth);
@@ -106,6 +123,7 @@ export function useOptimalGrid(
           bounds.height - verticalPadding,
           itemCount,
           document.documentElement.clientWidth - horizontalPadding,
+          window.matchMedia("(max-width: 1039px)").matches,
         ),
       );
     };

@@ -512,3 +512,76 @@
 .backgroundMeta > button:hover {
   color: #ffc4bf;
 }
+
+@media (max-width: 1039px) {
+  .heading > span,
+  .nameField > span {
+    font-size: 14px;
+  }
+
+  .heading button {
+    font-size: 13px;
+  }
+
+  .savedProfile,
+  .savedProfile > button:first-child {
+    width: 38px;
+    height: 38px;
+  }
+
+  .savedProfile > .deleteProfile {
+    width: 20px;
+    height: 20px;
+  }
+
+  .profileFields {
+    grid-template-columns: 106px minmax(0, 1fr);
+    align-items: end;
+  }
+
+  .avatarCluster,
+  .avatarButton {
+    width: 76px;
+    height: 76px;
+  }
+
+  .avatarCluster {
+    width: 106px;
+  }
+
+  .actionRail {
+    left: 80px;
+    width: 24px;
+    height: 76px;
+    gap: 2px;
+  }
+
+  .appearanceButton,
+  .colorPicker {
+    width: 24px;
+    height: 24px;
+    flex-basis: 24px;
+  }
+
+  .appearanceButton::after {
+    font-size: 11px;
+  }
+
+  .nameField input {
+    height: 52px;
+    font-size: 16px;
+  }
+
+  .colorPopover {
+    top: 30px;
+    left: -78px;
+    width: min(218px, calc(100vw - 48px));
+  }
+
+  .backgroundDialog > header span,
+  .backgroundDropzone > div span,
+  .backgroundMeta > span,
+  .backgroundMeta > button {
+    font-size: 12px;
+  }
+}

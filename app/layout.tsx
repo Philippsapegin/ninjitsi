@@ -6,7 +6,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL("https://nin.caerwydyr.ru"),
   title: "Ninjitsi simple calls",
-  description: "Simple desktop video calls powered by Jitsi.",
+  description: "Simple video calls powered by Jitsi.",
   alternates: {
     canonical: "/",
   },
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     url: "/",
     siteName: "Ninjitsi",
     title: "Ninjitsi simple calls",
-    description: "Simple desktop video calls powered by Jitsi.",
+    description: "Simple video calls powered by Jitsi.",
     images: [
       {
         url: "/ninjitsi-social.png",
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Ninjitsi simple calls",
-    description: "Simple desktop video calls powered by Jitsi.",
+    description: "Simple video calls powered by Jitsi.",
     images: ["/ninjitsi-social.png"],
   },
 };

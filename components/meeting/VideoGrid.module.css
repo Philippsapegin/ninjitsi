@@ -90,3 +90,57 @@
 .sceneCell > article {
   height: 100%;
 }
+
+@media (max-width: 1039px) {
+  .viewport {
+    display: block;
+    padding: 10px 12px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-color: rgba(216, 255, 99, 0.34) transparent;
+    scrollbar-width: thin;
+  }
+
+  .grid {
+    max-height: none;
+    margin: 0 auto;
+  }
+
+  .cell:hover > article,
+  .sceneCell:hover > article {
+    transform: none;
+  }
+
+  .scene {
+    height: auto;
+    grid-template-rows: auto auto;
+  }
+
+  .sceneMain {
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  .sceneMain > article {
+    width: 100%;
+    height: auto;
+  }
+
+  .sceneStrip {
+    height: auto;
+    max-width: none !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .sceneStrip:has(> :only-child) {
+    grid-template-columns: 1fr !important;
+  }
+
+  .sceneCell {
+    max-height: none;
+  }
+
+  .sceneCell > article {
+    height: auto;
+  }
+}

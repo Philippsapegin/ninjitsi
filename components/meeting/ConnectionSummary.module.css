@@ -158,3 +158,20 @@
 .strength.level1 i.filled {
   background: #ff625c;
 }
+
+@media (max-width: 1039px) {
+  .root {
+    height: 30px;
+    font-size: 11px;
+  }
+
+  .root > strong,
+  .row > span:first-child,
+  .row > strong {
+    font-size: 11px;
+  }
+
+  .popover {
+    width: min(310px, calc(100vw - 24px));
+  }
+}

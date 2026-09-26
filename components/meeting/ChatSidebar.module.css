@@ -730,3 +730,93 @@
     transform: rotate(360deg);
   }
 }
+
+@media (max-width: 1039px) {
+  .root,
+  .root.closed {
+    width: 100%;
+    min-width: 0;
+    height: clamp(140px, 32dvh, 320px);
+    flex: 0 0 auto;
+    transition: height 220ms ease;
+  }
+
+  .root.closed {
+    height: 44px;
+  }
+
+  .panel {
+    width: 100%;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .closed .panel {
+    transform: translateY(100%);
+  }
+
+  .tab {
+    top: 4px;
+    right: calc(50% - 22px);
+    width: 44px;
+    border-radius: 9px;
+    transform: translateY(10px);
+  }
+
+  .closed .tab {
+    transform: translateY(0);
+  }
+
+  .panel > header {
+    height: 42px;
+  }
+
+  .panel > header strong {
+    font-size: 15px;
+  }
+
+  .panel > header button svg {
+    transform: rotate(90deg);
+  }
+
+  .messages {
+    padding: 10px 16px;
+    gap: 13px;
+  }
+
+  .messages article header strong,
+  .messages article p,
+  .attachment strong {
+    font-size: 13px;
+  }
+
+  .messages article time,
+  .attachment small,
+  .replyQuote strong,
+  .replyQuote span,
+  .replyContext strong,
+  .replyContext span {
+    font-size: 11px;
+  }
+
+  .empty strong,
+  .empty span,
+  .recipientPicker > button,
+  .recipientMenu > header strong,
+  .recipientMenu > header span,
+  .recipientMenu > button > span:nth-child(2),
+  .messageActions button {
+    font-size: 12px;
+  }
+
+  .compose {
+    margin-bottom: 10px;
+  }
+
+  .recipientPicker > button {
+    height: 30px;
+  }
+
+  .panel textarea {
+    font-size: 16px;
+  }
+}

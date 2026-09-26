@@ -1100,6 +1100,44 @@ try {
   ) {
     throw new Error("Удалённый видеофон повреждён или сменил формат");
   }
+
+  const desktopViewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => {
+    const chat = document.querySelector("aside")?.getBoundingClientRect();
+    const controls = document.querySelector("footer")?.getBoundingClientRect();
+    return chat && controls && Math.abs(chat.bottom - controls.top) < 1;
+  }, undefined, { timeout: 5_000 });
+  await page.waitForTimeout(150);
+  const mobilePair = await page.evaluate(() => {
+    const tiles = Array.from(document.querySelectorAll("[data-video-tile]"));
+    const bounds = tiles.map((tile) => tile.getBoundingClientRect());
+    const chat = document.querySelector("aside")?.getBoundingClientRect();
+    const controls = document.querySelector("footer")?.getBoundingClientRect();
+
+    return {
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      bounds: bounds.map(({ left, top, width, height }) => ({ left, top, width, height })),
+      chatBottom: chat?.bottom,
+      chatWidth: chat?.width,
+      controlsTop: controls?.top,
+    };
+  });
+  if (
+    mobilePair.bounds.length !== 2 ||
+    Math.abs(mobilePair.bounds[0].left - mobilePair.bounds[1].left) > 1 ||
+    Math.abs(mobilePair.bounds[0].top - mobilePair.bounds[1].top) < 10 ||
+    mobilePair.bounds.some(({ width, height }) => Math.abs(width / height - 16 / 9) > 0.001) ||
+    mobilePair.scrollWidth > mobilePair.clientWidth ||
+    Math.abs((mobilePair.chatBottom ?? 0) - (mobilePair.controlsTop ?? 0)) > 1 ||
+    Math.abs((mobilePair.chatWidth ?? 0) - mobilePair.clientWidth) > 1
+  ) {
+    throw new Error(`Two-person mobile layout is invalid: ${JSON.stringify(mobilePair)}`);
+  }
+  await page.setViewportSize(desktopViewport ?? { width: 1280, height: 720 });
+  await page.waitForTimeout(350);
+
   await page
     .getByRole("button", { name: "Включить камеру" })
     .click();
@@ -1249,6 +1287,7 @@ try {
           connectionStats: "conference RTT passed",
           deviceSettings: "input/output enumeration, output routing and feed diagnostics passed",
           gridDuringChat: "two-participant row remained stable",
+          mobileGrid: "two-participant column and bottom chat passed",
           microphone: "toggle passed",
           microphoneDefault: "explicit default device passed",
           microphoneLevel: "reactive outline passed",

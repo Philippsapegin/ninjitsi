@@ -28,6 +28,13 @@ body {
   color: var(--text);
 }
 
+@media (max-width: 1039px) {
+  html,
+  body {
+    min-width: 0;
+  }
+}
+
 body,
 button,
 input {

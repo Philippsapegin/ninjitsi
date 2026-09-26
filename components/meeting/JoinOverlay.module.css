@@ -266,3 +266,56 @@
     transform: rotate(360deg);
   }
 }
+
+@media (max-width: 1039px) {
+  .overlay {
+    min-width: 0;
+    min-height: 100dvh;
+    padding: 74px 16px 24px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    place-items: start center;
+  }
+
+  .topBrand {
+    top: 17px;
+    left: 20px;
+  }
+
+  .card {
+    width: min(470px, 100%);
+    padding: 20px;
+    border-radius: 19px;
+  }
+
+  .card h1 {
+    font-size: 33px;
+  }
+
+  .card > p {
+    margin-bottom: 22px;
+    font-size: 15px;
+  }
+
+  .field > span,
+  .deviceChoice button > span,
+  .joinButton {
+    font-size: 14px;
+  }
+
+  .field input {
+    font-size: 16px;
+  }
+
+  .deviceChoice button {
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .deviceChoice button em,
+  .optionalLabel em,
+  .error,
+  .demoNote {
+    font-size: 12px;
+  }
+}

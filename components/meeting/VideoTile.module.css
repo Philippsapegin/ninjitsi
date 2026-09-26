@@ -283,3 +283,35 @@
   font-weight: 760;
   text-transform: uppercase;
 }
+
+@media (max-width: 1039px) {
+  .identity {
+    bottom: 9px;
+    left: 10px;
+  }
+
+  .name,
+  .nameButton {
+    font-size: 13px;
+  }
+
+  .badges {
+    right: 8px;
+    bottom: 8px;
+  }
+
+  .mutedBadge {
+    width: 27px;
+    height: 27px;
+  }
+
+  .volumeControl {
+    width: min(196px, calc(100vw - 34px));
+  }
+
+  .volumeControl header span,
+  .volumeControl header strong,
+  .volumeControl > button {
+    font-size: 12px;
+  }
+}

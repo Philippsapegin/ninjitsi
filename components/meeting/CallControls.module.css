@@ -122,3 +122,28 @@
     transform: rotate(360deg);
   }
 }
+
+@media (max-width: 1039px) {
+  .bar {
+    height: calc(66px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    align-items: center;
+  }
+
+  .dock {
+    height: 62px;
+  }
+
+  .control {
+    width: 48px;
+    height: 48px;
+  }
+
+  .control.danger {
+    width: 56px;
+  }
+
+  .control > span {
+    display: none;
+  }
+}

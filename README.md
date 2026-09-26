@@ -1,6 +1,6 @@
 # Ninjitsi
 
-Ninjitsi is a desktop-first web client for a self-hosted Jitsi deployment. It replaces the standard meeting interface with a responsive 16:9 grid, stage mode, local profiles, chat, device controls, and per-participant audio controls. Guests open a room link in a current desktop browser; they do not install Ninjitsi or Jitsi.
+Ninjitsi is a responsive web client for a self-hosted Jitsi deployment. It replaces the standard meeting interface with a 16:9 grid, stage mode, local profiles, chat, device controls, and per-participant audio controls. Guests open a room link in a current browser; they do not install Ninjitsi or Jitsi.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ For a small public installation:
 - Docker Engine with Docker Compose v2, Git, curl, unzip, and OpenSSL;
 - two DNS names pointing to the server, for example `call.example.com` and `jitsi.example.com`;
 - inbound `80/tcp`, `443/tcp`, and `10000/udp` in both the host firewall and hosting-provider firewall;
-- a current desktop Chrome or Edge for clients.
+- a current browser with WebRTC and camera/microphone permissions for clients.
 
 Port `10000/udp` is the Jitsi Videobridge media path. A reverse proxy does not replace it. Add a TURN server over TCP/TLS if clients must work from networks that block UDP.
 
@@ -714,7 +714,7 @@ Upgrade Jitsi separately, following the selected release notes and official Dock
 
 Nothing is installed on the client computer.
 
-1. The creator opens `https://call.example.com` in current desktop Chrome or Edge.
+1. The creator opens `https://call.example.com` in a current browser.
 2. They select or create a local profile, optionally enter a room password, and select **Create room**.
 3. Ninjitsi creates the room and opens a direct URL such as `https://call.example.com/room/quiet-studio-0123456789abcdef01234567`.
 4. The creator sends that URL to guests. A room password, when used, should be sent separately.
@@ -726,7 +726,7 @@ Profiles and avatars remain in that browser's local storage; optional camera-off
 ## Features
 
 - **Local profiles:** reusable names, avatars, tile colors, and optional 16:9 camera-off backgrounds stored in the client's browser. Backgrounds accept JPG, PNG, or GIF files up to 3 MB.
-- **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage.
+- **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage. On narrow screens, chat moves below the video and the grid uses one column for two people or at most two columns for larger calls.
 - **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API.
 - **Device controls and feed diagnostics:** choose microphone, camera, and audio output; an optional panel shows local microphone activity and a video preview. Audio-output selection depends on browser support and may require a browser permission prompt.
 - **Private messages and replies:** text and attachments can target selected participants; private replies retain their recipient set.
@@ -808,5 +808,9 @@ device switching (including audio output), local feed diagnostics, noise suppres
 acceptance run still needs real devices on at least two physical networks; a
 browser on the Docker host cannot prove NAT, firewall, TURN, acoustic, or
 six-hour Internet behavior.
+
+The visual suite also checks 320–1024 px viewports, the bottom chat,
+two-column mobile grid, mobile scene layout, and settings/entry forms. It
+checks layout in a browser viewport, not media behavior on a physical phone.
 
 Official references: [Jitsi Docker deployment](https://jitsi.github.io/handbook/docs/devops-guide/devops-guide-docker/), [Jitsi token authentication](https://jitsi.github.io/handbook/docs/devops-guide/token-authentication/), [Docker Engine on Ubuntu](https://docs.docker.com/engine/install/ubuntu/), and [Caddy installation](https://caddyserver.com/docs/install#debian-ubuntu-raspbian).
