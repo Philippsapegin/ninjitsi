@@ -727,7 +727,7 @@ Profiles and avatars remain in that browser's local storage; optional camera-off
 
 - **Local profiles:** reusable names, avatars, tile colors, and optional 16:9 camera-off backgrounds stored in the client's browser. Backgrounds accept JPG, PNG, or GIF files up to 3 MB.
 - **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage. On narrow screens, chat moves below the video and the grid uses one column for two people or at most two columns for larger calls.
-- **Noise suppression:** optional RNNoise processing through the Jitsi audio-track effect API.
+- **Noise suppression:** optional browser-native microphone processing. Switching modes briefly reacquires the microphone; if the browser cannot apply the new mode, Ninjitsi restores the previous capture when possible.
 - **Device controls and feed diagnostics:** choose microphone, camera, and audio output; an optional panel shows local microphone activity and a video preview. Audio-output selection depends on browser support and may require a browser permission prompt.
 - **Private messages and replies:** text and attachments can target selected participants; private replies retain their recipient set.
 - **Personal volume:** every remote participant can be adjusted locally from 0% to 200%; local microphone audio is never attached to local output.
@@ -778,7 +778,10 @@ With Ninjitsi running:
 npm run smoke:rooms
 npm run smoke:profiles
 npm run smoke:visual
+npm run smoke:audio
 ```
+
+`smoke:audio` measures the actual 0%, 100%, and 200% output of the remote-audio component in Chrome and checks browser microphone capture with suppression on and off. Set `NINJITSI_FAKE_AUDIO_FILE` to a local WAV recording containing speech to additionally assert that suppression does not turn voice into silence. No test recording is bundled with the repository.
 
 Run the real media suite against a reachable Jitsi instance:
 

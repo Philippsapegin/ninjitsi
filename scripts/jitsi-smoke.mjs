@@ -241,6 +241,7 @@ const knownJitsiWarnings = [
   /\[util:XMLUtils\].*findAll error/,
   /No SSRC lines found in remote SDP/,
   /removeRemoteStreamsOnLeave error: ClearedQueueError/,
+  /\[stats:RTPStatsCollector\].*No participant ID returned by LocalTrack/,
   ...(allowTransportRecoveryErrors
     ? [
         /\[rtc:BridgeChannel\].*Channel closed/,
@@ -267,9 +268,13 @@ try {
 
     localStorage.setItem("ninjitsi.locale", "ru");
     window.__ninjitsiCapturedConstraints = [];
+    window.__ninjitsiCapturedAudioTracks = [];
     navigator.mediaDevices.getUserMedia = (constraints) => {
       window.__ninjitsiCapturedConstraints.push(constraints);
-      return originalGetUserMedia(constraints);
+      return originalGetUserMedia(constraints).then((stream) => {
+        window.__ninjitsiCapturedAudioTracks.push(...stream.getAudioTracks());
+        return stream;
+      });
     };
   });
   await page.addInitScript(
@@ -368,6 +373,12 @@ try {
 
   if (!usedSystemMicrophone) {
     throw new Error("Системный микрофон не передан как deviceId=default");
+  }
+  const initialMicrophoneSuppression = await page.evaluate(() =>
+    window.__ninjitsiCapturedAudioTracks.at(-1)?.getSettings().noiseSuppression,
+  );
+  if (initialMicrophoneSuppression !== false) {
+    throw new Error(`Initial microphone noise suppression is not off: ${initialMicrophoneSuppression}`);
   }
   await page.waitForFunction(
     () => {
@@ -1039,11 +1050,45 @@ try {
 
   if (await noiseSuppression.isEnabled()) {
     await noiseSuppression.click();
-    await page.waitForTimeout(1000);
+    await page.waitForFunction(() =>
+      document.querySelector('button[aria-label="Шумоподавление"]')?.getAttribute("aria-checked") === "true",
+    );
 
     if ((await noiseSuppression.getAttribute("aria-checked")) !== "true") {
       throw new Error("Шумоподавление не включилось");
     }
+    const microphoneWithSuppression = await page.evaluate(() => {
+      const track = window.__ninjitsiCapturedAudioTracks.at(-1);
+      return {
+        count: window.__ninjitsiCapturedAudioTracks.length,
+        live: track?.readyState === "live",
+        noiseSuppression: track?.getSettings().noiseSuppression,
+      };
+    });
+    if (!microphoneWithSuppression.live || microphoneWithSuppression.noiseSuppression !== true) {
+      throw new Error(`The microphone was not recaptured with noise suppression: ${JSON.stringify(microphoneWithSuppression)}`);
+    }
+    await noiseSuppression.click();
+    await page.waitForFunction(() =>
+      document.querySelector('button[aria-label="Шумоподавление"]')?.getAttribute("aria-checked") === "false",
+    );
+    const microphoneWithoutSuppression = await page.evaluate(() => {
+      const track = window.__ninjitsiCapturedAudioTracks.at(-1);
+      return {
+        live: track?.readyState === "live",
+        noiseSuppression: track?.getSettings().noiseSuppression,
+      };
+    });
+    if (!microphoneWithoutSuppression.live || microphoneWithoutSuppression.noiseSuppression !== false) {
+      throw new Error(`The microphone was not recaptured without noise suppression: ${JSON.stringify(microphoneWithoutSuppression)}`);
+    }
+    await observerPage.waitForFunction(() => {
+      const sink = document.querySelector('[data-audio-sink="remote"]');
+      return sink instanceof HTMLAudioElement &&
+        sink.srcObject instanceof MediaStream &&
+        sink.srcObject.getAudioTracks()[0]?.readyState === "live" &&
+        !sink.paused;
+    });
   }
 
   const profileBackground = settingsDialog.getByRole("switch", {

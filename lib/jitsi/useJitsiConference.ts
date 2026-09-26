@@ -14,8 +14,8 @@ import {
   saveMediaPreferences,
 } from "./mediaPreferences";
 import {
+  createBrowserMicrophoneTrack,
   isNoiseSuppressionSupported,
-  JitsiNoiseSuppressionEffect,
 } from "./noiseSuppression";
 import type {
   ChatAttachment,
@@ -779,6 +779,8 @@ async function createLocalTrack(
   library: JitsiMeetJSLibrary,
   device: LocalMediaDevice,
   deviceId = "",
+  noiseSuppressionEnabled = false,
+  browserCapture = true,
 ) {
   // Chromium accepts "default" as a synthetic device id and needs it to
   // reliably follow the operating-system microphone. Firefox selects the
@@ -788,6 +790,19 @@ async function createLocalTrack(
     ? ""
     : "default";
   const microphoneId = deviceId || defaultMicrophoneId;
+  if (
+    browserCapture &&
+    device === "audio" &&
+    isNoiseSuppressionSupported() &&
+    library.createLocalTracksFromMediaStreams
+  ) {
+    return createBrowserMicrophoneTrack(
+      library,
+      microphoneId,
+      noiseSuppressionEnabled,
+    );
+  }
+
   const tracks = await library.createLocalTracks({
     devices: [device],
     ...(device === "audio" && microphoneId
@@ -812,30 +827,6 @@ async function createLocalTrack(
   }
 
   return track;
-}
-
-async function applyNoiseSuppression(
-  track: JitsiTrackLike,
-  serverUrl: string,
-) {
-  if (!track.setEffect) {
-    throw new Error("The audio track does not support effects.");
-  }
-
-  const effect = new JitsiNoiseSuppressionEffect(
-    new URL(
-      "/libs/noise-suppressor-worklet.min.js",
-      serverUrl,
-    ).toString(),
-  );
-
-  try {
-    await effect.prepare();
-    await track.setEffect(effect);
-  } catch (caughtError) {
-    effect.stopEffect();
-    throw caughtError;
-  }
 }
 
 function pickPreferredVideo(tracks: JitsiTrackLike[]) {
@@ -943,7 +934,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const audioBusyRef = useRef(false);
   const videoBusyRef = useRef(false);
   const screenShareBusyRef = useRef(false);
-  const audioLevelTracksRef = useRef(new WeakSet<JitsiTrackLike>());
+  const audioMeterRef = useRef<{
+    stop: () => void;
+    track: JitsiTrackLike;
+  } | null>(null);
   const audioInputIdRef = useRef("");
   const audioOutputIdRef = useRef("");
   const videoInputIdRef = useRef("");
@@ -975,17 +969,18 @@ export function useJitsiConference(roomName: string): ConferenceController {
   useEffect(() => {
     queueMicrotask(() => {
       const preferences = readMediaPreferences();
+      const noiseSupported = isNoiseSuppressionSupported();
+      const noiseEnabled = preferences.noiseSuppressionEnabled && noiseSupported;
 
       audioInputIdRef.current = preferences.audioInputId;
       audioOutputIdRef.current = preferences.audioOutputId;
       videoInputIdRef.current = preferences.videoInputId;
-      noiseSuppressionEnabledRef.current =
-        preferences.noiseSuppressionEnabled;
+      noiseSuppressionEnabledRef.current = noiseEnabled;
       setAudioInputIdState(preferences.audioInputId);
       setAudioOutputIdState(preferences.audioOutputId);
       setVideoInputIdState(preferences.videoInputId);
-      setNoiseSuppressionState(preferences.noiseSuppressionEnabled);
-      setNoiseSuppressionSupported(isNoiseSuppressionSupported());
+      setNoiseSuppressionState(noiseEnabled);
+      setNoiseSuppressionSupported(noiseSupported);
     });
   }, []);
 
@@ -998,27 +993,114 @@ export function useJitsiConference(roomName: string): ConferenceController {
     });
   }, []);
 
-  const watchLocalAudioLevel = useCallback((track?: JitsiTrackLike) => {
-    const eventName = libraryRef.current?.events.track.TRACK_AUDIO_LEVEL_CHANGED;
+  const createConfiguredAudioTrack = useCallback(
+    async (library: JitsiMeetJSLibrary, deviceId: string) => {
+      try {
+        return await createLocalTrack(
+          library,
+          "audio",
+          deviceId,
+          noiseSuppressionEnabledRef.current,
+        );
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          (error.name === "NotAllowedError" || error.name === "SecurityError")
+        ) {
+          throw error;
+        }
 
-    if (
-      !track ||
-      !eventName ||
-      !track.addEventListener ||
-      audioLevelTracksRef.current.has(track)
-    ) {
+        if (!noiseSuppressionEnabledRef.current) {
+          const fallback = await createLocalTrack(
+            library,
+            "audio",
+            deviceId,
+            false,
+            false,
+          );
+          setNoiseSuppressionSupported(false);
+          setError(
+            ui(
+              "Browser noise suppression controls are unavailable. The microphone remains on.",
+              "Управление шумоподавлением недоступно. Микрофон продолжает работать.",
+            ),
+          );
+          return fallback;
+        }
+
+        let track: JitsiTrackLike;
+        try {
+          track = await createLocalTrack(library, "audio", deviceId, false);
+        } catch {
+          track = await createLocalTrack(library, "audio", deviceId, false, false);
+          setNoiseSuppressionSupported(false);
+        }
+        noiseSuppressionEnabledRef.current = false;
+        setNoiseSuppressionState(false);
+        persistMediaPreferences();
+        setError(
+          ui(
+            "Noise suppression could not start. The microphone remains on without it.",
+            "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
+          ),
+        );
+        return track;
+      }
+    },
+    [persistMediaPreferences],
+  );
+
+  const watchLocalAudioLevel = useCallback((track?: JitsiTrackLike) => {
+    if (audioMeterRef.current?.track === track) {
       return;
     }
 
-    audioLevelTracksRef.current.add(track);
-    track.addEventListener(eventName, (rawLevel) => {
-      const level =
-        typeof rawLevel === "number" && Number.isFinite(rawLevel)
-          ? Math.max(0, Math.min(1, rawLevel))
-          : 0;
+    audioMeterRef.current?.stop();
+    audioMeterRef.current = null;
+    setLocalAudioLevel(0);
+    const nativeTrack = track?.getTrack?.();
+    if (!track || !nativeTrack) {
+      return;
+    }
 
-      setLocalAudioLevel(track.isMuted() ? 0 : level);
-    });
+    try {
+      const context = new AudioContext();
+      const source = context.createMediaStreamSource(
+        new MediaStream([nativeTrack]),
+      );
+      const analyser = context.createAnalyser();
+      const silentOutput = context.createGain();
+      const samples = new Float32Array(1024);
+      analyser.fftSize = samples.length;
+      silentOutput.gain.value = 0;
+      source.connect(analyser);
+      analyser.connect(silentOutput);
+      silentOutput.connect(context.destination);
+      void context.resume().catch(() => undefined);
+
+      const interval = window.setInterval(() => {
+        analyser.getFloatTimeDomainData(samples);
+        let energy = 0;
+        for (const sample of samples) {
+          energy += sample * sample;
+        }
+        const rms = Math.sqrt(energy / samples.length);
+        setLocalAudioLevel(track.isMuted() ? 0 : Math.min(1, rms * 6));
+      }, 80);
+
+      audioMeterRef.current = {
+        track,
+        stop: () => {
+          window.clearInterval(interval);
+          source.disconnect();
+          analyser.disconnect();
+          silentOutput.disconnect();
+          void context.close().catch(() => undefined);
+        },
+      };
+    } catch {
+      // The meter is optional; a failed analyzer must not stop the microphone.
+    }
   }, []);
 
   const setMediaBusy = useCallback(
@@ -1155,6 +1237,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   const teardown = useCallback(async () => {
     disposedRef.current = true;
+    audioMeterRef.current?.stop();
+    audioMeterRef.current = null;
     const conference = conferenceRef.current;
     const connection = connectionRef.current;
 
@@ -1302,6 +1386,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
           roomName,
         );
         const preferences = readMediaPreferences();
+        const noiseSupported = isNoiseSuppressionSupported() &&
+          Boolean(library.createLocalTracksFromMediaStreams);
+        const noiseEnabled =
+          preferences.noiseSuppressionEnabled && noiseSupported;
 
         if (disposedRef.current) {
           return;
@@ -1310,12 +1398,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
         audioInputIdRef.current = preferences.audioInputId;
         audioOutputIdRef.current = preferences.audioOutputId;
         videoInputIdRef.current = preferences.videoInputId;
-        noiseSuppressionEnabledRef.current =
-          preferences.noiseSuppressionEnabled;
+        noiseSuppressionEnabledRef.current = noiseEnabled;
         setAudioInputIdState(preferences.audioInputId);
         setAudioOutputIdState(preferences.audioOutputId);
         setVideoInputIdState(preferences.videoInputId);
-        setNoiseSuppressionState(preferences.noiseSuppressionEnabled);
+        setNoiseSuppressionState(noiseEnabled);
+        setNoiseSuppressionSupported(noiseSupported);
         libraryRef.current = library;
         library.init({
           disableAudioLevels: false,
@@ -1349,7 +1437,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 device === "audio"
                   ? preferences.audioInputId
                   : preferences.videoInputId;
-              const track = await createLocalTrack(library, device, deviceId);
+              const track = device === "audio"
+                ? await createConfiguredAudioTrack(library, deviceId)
+                : await createLocalTrack(library, device, deviceId);
 
               if (startMuted) {
                 await track.mute();
@@ -2103,37 +2193,6 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 }
               }
 
-              const publishedAudioTrack = conference
-                .getLocalTracks("audio")
-                .find(Boolean);
-
-              if (
-                preferences.noiseSuppressionEnabled &&
-                publishedAudioTrack?.setEffect
-              ) {
-                setIsDeviceSwitchBusy(true);
-                setMediaBusy("audio", true);
-                try {
-                  await applyNoiseSuppression(
-                    publishedAudioTrack,
-                    serverUrl,
-                  );
-                } catch {
-                  noiseSuppressionEnabledRef.current = false;
-                  setNoiseSuppressionState(false);
-                  persistMediaPreferences();
-                  setError(
-                    ui(
-                      "Noise suppression could not start. The microphone remains on without it.",
-                      "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
-                    ),
-                  );
-                } finally {
-                  setMediaBusy("audio", false);
-                  setIsDeviceSwitchBusy(false);
-                }
-              }
-
               syncParticipants();
 
               if (failures.length > 0) {
@@ -2227,8 +2286,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
       }
     },
     [
+      createConfiguredAudioTrack,
       isDemo,
-      persistMediaPreferences,
       roomName,
       scheduleParticipantSync,
       scheduleFullReconnect,
@@ -2282,27 +2341,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
           await currentTrack.mute();
         }
       } else {
-        const newTrack = await createLocalTrack(
+        const newTrack = await createConfiguredAudioTrack(
           library,
-          "audio",
           audioInputIdRef.current,
         );
-
-        if (noiseSuppressionEnabledRef.current && newTrack.setEffect) {
-          try {
-            await applyNoiseSuppression(newTrack, serverUrl);
-          } catch {
-            noiseSuppressionEnabledRef.current = false;
-            setNoiseSuppressionState(false);
-            persistMediaPreferences();
-            setError(
-              ui(
-                "Noise suppression could not start. The microphone remains on without it.",
-                "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
-              ),
-            );
-          }
-        }
 
         if (
           disposedRef.current ||
@@ -2326,9 +2368,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
       syncParticipants();
     }
   }, [
+    createConfiguredAudioTrack,
     isDemo,
-    persistMediaPreferences,
-    serverUrl,
     setMediaBusy,
     syncParticipants,
   ]);
@@ -2580,30 +2621,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
               device === "audio" ||
               candidate.getVideoType?.() !== "desktop",
           );
-        const newTrack = await createLocalTrack(library, device, deviceId);
+        const newTrack = device === "audio"
+          ? await createConfiguredAudioTrack(library, deviceId)
+          : await createLocalTrack(library, device, deviceId);
 
         if (oldTrack?.isMuted()) {
           await newTrack.mute();
-        }
-
-        if (
-          device === "audio" &&
-          noiseSuppressionEnabledRef.current &&
-          newTrack.setEffect
-        ) {
-          try {
-            await applyNoiseSuppression(newTrack, serverUrl);
-          } catch {
-            noiseSuppressionEnabledRef.current = false;
-            setNoiseSuppressionState(false);
-            persistMediaPreferences();
-            setError(
-              ui(
-                "Noise suppression could not start. The microphone remains on without it.",
-                "Шумоподавление не запустилось. Микрофон продолжает работать без него.",
-              ),
-            );
-          }
         }
 
         if (
@@ -2638,9 +2661,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
       }
     },
     [
+      createConfiguredAudioTrack,
       isDemo,
       persistMediaPreferences,
-      serverUrl,
       setMediaBusy,
       syncParticipants,
     ],
@@ -2683,30 +2706,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   const setNoiseSuppressionEnabled = useCallback(
     async (enabled: boolean) => {
-      noiseSuppressionEnabledRef.current = enabled;
-      setNoiseSuppressionState(enabled);
-      persistMediaPreferences();
-
-      if (isDemo) {
-        return;
-      }
-
-      const audioTrack = conferenceRef.current
-        ?.getLocalTracks("audio")
-        .find(Boolean);
-
-      if (!audioTrack?.setEffect) {
-        if (enabled) {
-          setNoiseSuppressionState(false);
-          noiseSuppressionEnabledRef.current = false;
-          persistMediaPreferences();
-          setError(
-            ui(
-              "This Jitsi build does not support noise suppression for audio tracks.",
-              "Эта сборка Jitsi не поддерживает шумоподавление для аудиотрека.",
-            ),
-          );
-        }
+      if (
+        !isNoiseSuppressionSupported() ||
+        !libraryRef.current?.createLocalTracksFromMediaStreams
+      ) {
         return;
       }
 
@@ -2715,27 +2718,117 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setMediaBusy("audio", true);
 
       try {
-        if (enabled) {
-          await applyNoiseSuppression(audioTrack, serverUrl);
-        } else {
-          await audioTrack.setEffect(undefined);
+        const conference = conferenceRef.current;
+        const library = libraryRef.current;
+        const oldTrack = isDemo
+          ? undefined
+          : conference?.getLocalTracks("audio").find(Boolean);
+
+        if (conference && library && oldTrack) {
+          const oldNativeTrack = oldTrack.getTrack?.();
+          if (!oldNativeTrack) {
+            throw new Error("The current microphone track is unavailable.");
+          }
+          const wasMuted = oldTrack.isMuted();
+          const previousMode = noiseSuppressionEnabledRef.current;
+          const publishReplacement = async (replacement: JitsiTrackLike) => {
+            if (conference.replaceTrack) {
+              try {
+                await conference.replaceTrack(oldTrack, replacement);
+                return;
+              } catch {
+                // Some Jitsi versions cannot replace an already ended source.
+              }
+            }
+            await conference.removeTrack(oldTrack).catch(() => undefined);
+            await conference.addTrack(replacement);
+          };
+          let newTrack: JitsiTrackLike | undefined;
+
+          // Chromium reuses the original capture configuration while its
+          // microphone track is live. End it before requesting the new mode.
+          oldNativeTrack.stop();
+          try {
+            newTrack = await createLocalTrack(
+              library,
+              "audio",
+              audioInputIdRef.current,
+              enabled,
+            );
+            if (wasMuted) {
+              await newTrack.mute();
+            }
+            if (disposedRef.current || conferenceRef.current !== conference) {
+              await newTrack.dispose().catch(() => undefined);
+              return;
+            }
+            await publishReplacement(newTrack);
+          } catch (error) {
+            await newTrack?.dispose().catch(() => undefined);
+            try {
+              let restoredTrack: JitsiTrackLike;
+              try {
+                restoredTrack = await createLocalTrack(
+                  library,
+                  "audio",
+                  audioInputIdRef.current,
+                  previousMode,
+                );
+              } catch {
+                restoredTrack = await createLocalTrack(
+                  library,
+                  "audio",
+                  audioInputIdRef.current,
+                  false,
+                  false,
+                );
+                noiseSuppressionEnabledRef.current = false;
+                setNoiseSuppressionState(false);
+                setNoiseSuppressionSupported(false);
+                persistMediaPreferences();
+              }
+              try {
+                if (wasMuted) {
+                  await restoredTrack.mute();
+                }
+                await publishReplacement(restoredTrack);
+              } catch (restoreError) {
+                await restoredTrack.dispose().catch(() => undefined);
+                throw restoreError;
+              }
+              await oldTrack.dispose().catch(() => undefined);
+              syncParticipants();
+            } catch {
+              throw new Error("MICROPHONE_RECOVERY_FAILED");
+            }
+            throw error;
+          }
+
+          await oldTrack.dispose().catch(() => undefined);
+          syncParticipants();
         }
-      } catch {
-        noiseSuppressionEnabledRef.current = !enabled;
-        setNoiseSuppressionState(!enabled);
+
+        noiseSuppressionEnabledRef.current = enabled;
+        setNoiseSuppressionState(enabled);
         persistMediaPreferences();
+      } catch (error) {
         setError(
-          ui(
-            "Could not switch noise suppression.",
-            "Не удалось переключить шумоподавление.",
-          ),
+          error instanceof Error && error.message === "MICROPHONE_RECOVERY_FAILED"
+            ? ui(
+                "Could not restore the microphone. Re-select it in Settings.",
+                "Не удалось восстановить микрофон. Выберите его заново в настройках.",
+              )
+            : ui(
+                "Could not switch noise suppression. The microphone remains on.",
+                "Не удалось переключить шумоподавление. Микрофон продолжает работать.",
+              ),
         );
       } finally {
         setMediaBusy("audio", false);
         setIsDeviceSwitchBusy(false);
       }
     },
-    [isDemo, persistMediaPreferences, serverUrl, setMediaBusy],
+    [isDemo, persistMediaPreferences, setMediaBusy, syncParticipants],
   );
 
   const setVideoBackgroundEnabled = useCallback(

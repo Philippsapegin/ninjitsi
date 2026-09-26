@@ -58,12 +58,12 @@ export function AudioTrack({
 }: AudioTrackProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const outputRef = useRef<HTMLAudioElement>(null);
-  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const outputModeRef = useRef<"webaudio" | "element">("element");
   const outputDeviceIdRef = useRef(outputDeviceId);
   const appliedOutputDeviceIdRef = useRef(outputDeviceId);
   const volumeRef = useRef(volume);
+  const nativeTrack = track.getTrack?.();
 
   useEffect(() => {
     outputDeviceIdRef.current = outputDeviceId;
@@ -78,17 +78,21 @@ export function AudioTrack({
     }
 
     let cancelled = false;
-    let source: MediaElementAudioSourceNode | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
     let gain: GainNode | null = null;
     let destination: MediaStreamAudioDestinationNode | null = null;
     let context: AudioContext | null = null;
+    let attachedFallback = false;
 
     try {
+      if (!nativeTrack || nativeTrack.kind !== "audio") {
+        throw new Error("The remote audio track is unavailable.");
+      }
+
       context = getAudioContext();
       gain = context.createGain();
       destination = context.createMediaStreamDestination();
-      source = sourceRef.current ?? context.createMediaElementSource(element);
-      sourceRef.current = source;
+      source = context.createMediaStreamSource(new MediaStream([nativeTrack]));
       source.connect(gain);
       gain.connect(destination);
       gain.gain.value = volumeRef.current;
@@ -101,16 +105,9 @@ export function AudioTrack({
     } catch {
       source?.disconnect();
       gain?.disconnect();
-      if (source && gain && context) {
-        source.connect(gain);
-        gain.connect(context.destination);
-        gain.gain.value = volumeRef.current;
-        gainRef.current = gain;
-        element.dataset.audioGain = "webaudio";
-      } else {
-        element.dataset.audioGain = "element";
-        element.volume = Math.min(1, Math.max(0, volumeRef.current));
-      }
+      gainRef.current = null;
+      element.dataset.audioGain = "element";
+      element.volume = Math.min(1, Math.max(0, volumeRef.current));
       outputModeRef.current = "element";
       element.dataset.audioOutput = "remote";
       delete output.dataset.audioOutput;
@@ -132,21 +129,53 @@ export function AudioTrack({
         return;
       }
 
-      try {
-        await track.attach(element);
-      } catch {
-        return;
-      }
-
-      if (cancelled) {
-        return;
-      }
-
+      let graphReady = true;
       if (context) {
-        await context.resume().catch(() => undefined);
+        let resumeTimer: number | undefined;
+        graphReady = await Promise.race([
+          context.resume().then(
+            () => context?.state === "running",
+            () => false,
+          ),
+          new Promise<boolean>((resolve) => {
+            resumeTimer = window.setTimeout(() => resolve(false), 1500);
+          }),
+        ]);
+        window.clearTimeout(resumeTimer);
       }
+      if (outputModeRef.current === "webaudio" && graphReady) {
+        try {
+          await output.play();
+          return;
+        } catch {
+          // Fall back to direct playback when the processed stream is blocked.
+        }
+      }
+
       if (outputModeRef.current === "webaudio") {
-        await output.play().catch(() => undefined);
+        output.pause();
+        output.srcObject = null;
+        source?.disconnect();
+        gain?.disconnect();
+        gainRef.current = null;
+        outputModeRef.current = "element";
+        delete output.dataset.audioOutput;
+        element.dataset.audioOutput = "remote";
+        element.dataset.audioGain = "element";
+        element.volume = Math.min(1, Math.max(0, volumeRef.current));
+      }
+
+      if (!cancelled) {
+        try {
+          await track.attach(element);
+          attachedFallback = true;
+          if (cancelled) {
+            track.detach(element);
+            attachedFallback = false;
+          }
+        } catch {
+          // A failed attachment leaves this participant silent, not the call.
+        }
       }
     };
 
@@ -159,9 +188,11 @@ export function AudioTrack({
       gain?.disconnect();
       output.pause();
       output.srcObject = null;
-      track.detach(element);
+      if (attachedFallback) {
+        track.detach(element);
+      }
     };
-  }, [track]);
+  }, [track, nativeTrack]);
 
   useEffect(() => {
     if (appliedOutputDeviceIdRef.current === outputDeviceId) {

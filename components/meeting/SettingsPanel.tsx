@@ -295,7 +295,7 @@ export function SettingsPanel({
               <strong>{tr("Noise suppression", "Шумоподавление")}</strong>
               <small>
                 {noiseSuppressionSupported
-                  ? tr("RNNoise from Jitsi Meet", "RNNoise из Jitsi Meet")
+                  ? tr("Browser microphone processing", "Обработка микрофона браузером")
                   : tr(
                       "Not supported by this browser",
                       "Не поддерживается браузером",

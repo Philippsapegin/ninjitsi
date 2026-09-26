@@ -1,11 +1,5 @@
 export type MediaType = "audio" | "video";
 
-export interface JitsiTrackEffect {
-  isEnabled: (track: JitsiTrackLike) => boolean;
-  startEffect: (stream: MediaStream) => MediaStream;
-  stopEffect: () => void;
-}
-
 export interface JitsiTrackLike {
   addEventListener?: (
     event: string,
@@ -22,7 +16,6 @@ export interface JitsiTrackLike {
   isLocal?: () => boolean;
   isMuted: () => boolean;
   mute: () => Promise<void>;
-  setEffect?: (effect?: JitsiTrackEffect) => Promise<void>;
   unmute: () => Promise<void>;
 }
 
@@ -96,6 +89,12 @@ export interface JitsiMeetJSLibrary {
     micDeviceId?: string;
     resolution?: number;
   }) => Promise<JitsiTrackLike[]>;
+  createLocalTracksFromMediaStreams?: (tracks: Array<{
+    mediaType: "audio";
+    sourceType: "mic";
+    stream: MediaStream;
+    track: MediaStreamTrack;
+  }>) => JitsiTrackLike[];
   events: JitsiEventCollection;
   init: (options?: Record<string, unknown>) => void;
   logLevels?: Record<string, unknown>;

@@ -1,164 +1,48 @@
-import type { JitsiTrackEffect, JitsiTrackLike } from "./types";
-import { getStoredLocale, localize } from "@/lib/i18n";
-
-type AudioContextConstructor = typeof AudioContext;
-const PREPARATION_TIMEOUT_MS = 60_000;
-
-function getAudioContextConstructor(): AudioContextConstructor | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-
-  return (
-    window.AudioContext ??
-    (
-      window as typeof window & {
-        webkitAudioContext?: AudioContextConstructor;
-      }
-    ).webkitAudioContext
-  );
-}
+import type { JitsiMeetJSLibrary, JitsiTrackLike } from "./types";
 
 export function isNoiseSuppressionSupported() {
-  const AudioContextClass = getAudioContextConstructor();
-
-  if (!AudioContextClass || typeof AudioWorkletNode === "undefined") {
-    return false;
-  }
-
-  const context = new AudioContextClass();
-  const supported = Boolean(context.audioWorklet);
-
-  void context.close();
-  return supported;
+  return typeof navigator !== "undefined" &&
+    navigator.mediaDevices?.getSupportedConstraints?.().noiseSuppression === true;
 }
 
-export class JitsiNoiseSuppressionEffect implements JitsiTrackEffect {
-  private context: AudioContext;
-  private destination?: MediaStreamAudioDestinationNode;
-  private node?: AudioWorkletNode;
-  private originalTrack?: MediaStreamTrack;
-  private outputTrack?: MediaStreamTrack;
-  private preparation?: Promise<void>;
-  private source?: MediaStreamAudioSourceNode;
-  private stopped = false;
-
-  constructor(private readonly workletUrl: string) {
-    const AudioContextClass = getAudioContextConstructor();
-
-    if (!AudioContextClass) {
-      throw new Error(
-        localize(
-          getStoredLocale(),
-          "AudioWorklet is not supported by this browser.",
-          "AudioWorklet не поддерживается браузером",
-        ),
-      );
-    }
-
-    this.context = new AudioContextClass();
+export async function createBrowserMicrophoneTrack(
+  library: JitsiMeetJSLibrary,
+  deviceId: string,
+  enabled: boolean,
+): Promise<JitsiTrackLike> {
+  if (!isNoiseSuppressionSupported() || !library.createLocalTracksFromMediaStreams) {
+    throw new Error("Browser noise suppression is unavailable for this microphone.");
   }
 
-  prepare() {
-    if (!this.preparation) {
-      this.preparation = this.prepareWorklet();
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      noiseSuppression: enabled,
+    },
+    video: false,
+  });
+  const nativeTrack = stream.getAudioTracks()[0];
+
+  try {
+    if (!nativeTrack || nativeTrack.getSettings().noiseSuppression !== enabled) {
+      throw new Error("The browser did not apply the noise suppression setting.");
     }
 
-    return this.preparation;
-  }
+    const tracks = library.createLocalTracksFromMediaStreams([{
+      mediaType: "audio",
+      sourceType: "mic",
+      stream,
+      track: nativeTrack,
+    }]);
+    const track = tracks.find((candidate) => candidate.getType() === "audio");
 
-  isEnabled(track: JitsiTrackLike) {
-    return track.getType() === "audio";
-  }
-
-  startEffect(stream: MediaStream) {
-    if (!this.node || this.context.state !== "running") {
-      throw new Error("The noise suppressor is not ready.");
+    if (!track) {
+      throw new Error("Jitsi did not wrap the microphone track.");
     }
 
-    const originalTrack = stream.getAudioTracks()[0];
-
-    if (!originalTrack) {
-      throw new Error(
-        localize(
-          getStoredLocale(),
-          "The audio stream has no track.",
-          "У аудиопотока нет дорожки",
-        ),
-      );
-    }
-
-    this.originalTrack = originalTrack;
-    this.source = this.context.createMediaStreamSource(stream);
-    this.destination = this.context.createMediaStreamDestination();
-    this.outputTrack = this.destination.stream.getAudioTracks()[0];
-    this.source.connect(this.node);
-    this.node.connect(this.destination);
-    this.outputTrack.enabled = originalTrack.enabled;
-    originalTrack.enabled = true;
-
-    return this.destination.stream;
-  }
-
-  private async prepareWorklet() {
-    let timeoutId: number | undefined;
-
-    try {
-      await Promise.race([
-        Promise.all([
-          this.context.resume(),
-          this.context.audioWorklet.addModule(this.workletUrl),
-        ]),
-        new Promise<never>((_, reject) => {
-          timeoutId = window.setTimeout(
-            () => reject(new Error("Noise suppression preparation timed out.")),
-            PREPARATION_TIMEOUT_MS,
-          );
-        }),
-      ]);
-
-      if (this.stopped) {
-        throw new Error("The noise suppressor was stopped before it was ready.");
-      }
-
-      this.node = new AudioWorkletNode(
-        this.context,
-        "NoiseSuppressorWorklet",
-        {
-          channelCount: 1,
-          channelCountMode: "explicit",
-          channelInterpretation: "speakers",
-          numberOfInputs: 1,
-          numberOfOutputs: 1,
-          outputChannelCount: [1],
-        },
-      );
-    } catch (caughtError) {
-      console.error("Ninjitsi: noise suppression failed", caughtError);
-      await this.context.close().catch(() => undefined);
-      throw caughtError;
-    } finally {
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
-    }
-  }
-
-  stopEffect() {
-    if (this.stopped) {
-      return;
-    }
-
-    this.stopped = true;
-
-    if (this.originalTrack && this.outputTrack) {
-      this.originalTrack.enabled = this.outputTrack.enabled;
-    }
-
-    this.node?.port.close();
-    this.node?.disconnect();
-    this.source?.disconnect();
-    this.destination?.disconnect();
-    void this.context.close().catch(() => undefined);
+    return track;
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
   }
 }
