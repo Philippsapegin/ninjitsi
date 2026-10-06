@@ -1137,6 +1137,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         const tracks = participant.getTracks();
         const videoTrack = pickPreferredVideo(tracks);
         const audioTrack = tracks.find((track) => track.getType() === "audio");
+        const audioTracks = tracks.filter((track) => track.getType() === "audio");
         const videoBackgroundRevision =
           typeof participant.getProperty?.(
             VIDEO_BACKGROUND_REVISION_PROPERTY,
@@ -1157,6 +1158,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         return {
           audioMuted: participant.isAudioMuted(),
           audioTrack,
+          audioTracks,
           avatarUrl:
             typeof participant.getProperty?.("avatarURL") === "string"
               ? String(participant.getProperty?.("avatarURL"))

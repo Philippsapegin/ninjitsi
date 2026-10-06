@@ -30,7 +30,6 @@ export async function createBrowserMicrophoneTrack(
 
     const tracks = library.createLocalTracksFromMediaStreams([{
       mediaType: "audio",
-      sourceType: "mic",
       stream,
       track: nativeTrack,
     }]);

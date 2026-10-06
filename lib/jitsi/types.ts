@@ -9,6 +9,7 @@ export interface JitsiTrackLike {
   detach: (element?: HTMLElement) => void;
   dispose: () => Promise<void>;
   getDeviceId?: () => string;
+  getId?: () => number | string;
   getParticipantId?: () => string;
   getTrack?: () => MediaStreamTrack | undefined;
   getType: () => MediaType;
@@ -91,7 +92,7 @@ export interface JitsiMeetJSLibrary {
   }) => Promise<JitsiTrackLike[]>;
   createLocalTracksFromMediaStreams?: (tracks: Array<{
     mediaType: "audio";
-    sourceType: "mic";
+    sourceType?: string;
     stream: MediaStream;
     track: MediaStreamTrack;
   }>) => JitsiTrackLike[];
@@ -104,6 +105,7 @@ export interface JitsiMeetJSLibrary {
 export interface ParticipantView {
   audioMuted: boolean;
   audioTrack?: JitsiTrackLike;
+  audioTracks?: JitsiTrackLike[];
   avatarUrl?: string;
   displayName: string;
   id: string;

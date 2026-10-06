@@ -21,6 +21,8 @@
     "smoke:jitsi": "node scripts/jitsi-smoke.mjs",
     "smoke:profiles": "node scripts/profile-smoke.mjs",
     "smoke:audio": "node scripts/audio-regression.mjs",
+    "smoke:audio:remote": "node scripts/remote-audio-regression.mjs",
+    "smoke:audio:jitsi": "node scripts/jitsi-audio-smoke.mjs",
     "stack:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 prepare",
     "stack:up": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 up",
     "stack:down": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stack.ps1 down",

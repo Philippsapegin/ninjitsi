@@ -6,7 +6,7 @@ import type { JitsiTrackLike } from "@/lib/jitsi/types";
 let sharedAudioContext: AudioContext | null = null;
 
 function getAudioContext() {
-  if (!sharedAudioContext) {
+  if (!sharedAudioContext || sharedAudioContext.state === "closed") {
     sharedAudioContext = new window.AudioContext();
   }
 
@@ -18,7 +18,7 @@ interface VideoTrackProps {
   track: JitsiTrackLike;
 }
 
-export function VideoTrack({ isLocal, track }: VideoTrackProps) {
+export function VideoTrack({ track }: VideoTrackProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -36,7 +36,10 @@ export function VideoTrack({ isLocal, track }: VideoTrackProps) {
   return (
     <video
       autoPlay
-      muted={isLocal}
+      // A Jitsi stream can contain audio and video. Audio is exclusively
+      // played by AudioSinks, otherwise volume controls and echo prevention
+      // can be bypassed by a video element.
+      muted
       playsInline
       ref={videoRef}
     />
@@ -44,6 +47,7 @@ export function VideoTrack({ isLocal, track }: VideoTrackProps) {
 }
 
 interface AudioTrackProps {
+  onPlaybackBlocked?: (blocked: boolean) => void;
   outputDeviceId: string;
   participantId: string;
   track: JitsiTrackLike;
@@ -51,6 +55,7 @@ interface AudioTrackProps {
 }
 
 export function AudioTrack({
+  onPlaybackBlocked,
   outputDeviceId,
   participantId,
   track,
@@ -63,11 +68,16 @@ export function AudioTrack({
   const outputDeviceIdRef = useRef(outputDeviceId);
   const appliedOutputDeviceIdRef = useRef(outputDeviceId);
   const volumeRef = useRef(volume);
+  const onPlaybackBlockedRef = useRef(onPlaybackBlocked);
   const nativeTrack = track.getTrack?.();
 
   useEffect(() => {
     outputDeviceIdRef.current = outputDeviceId;
   }, [outputDeviceId]);
+
+  useEffect(() => {
+    onPlaybackBlockedRef.current = onPlaybackBlocked;
+  }, [onPlaybackBlocked]);
 
   useEffect(() => {
     const element = audioRef.current;
@@ -82,7 +92,40 @@ export function AudioTrack({
     let gain: GainNode | null = null;
     let destination: MediaStreamAudioDestinationNode | null = null;
     let context: AudioContext | null = null;
-    let attachedFallback = false;
+    let attached = false;
+    let starting = false;
+
+    // Chromium does not feed a remote WebRTC track into Web Audio until a
+    // media element consumes the ORIGINAL track. Playing the processed stream
+    // alone succeeds but produces silence. Keep this source playing muted.
+    element.muted = true;
+
+    const applyOutputDevice = async (target: HTMLAudioElement) => {
+      if ("setSinkId" in target) {
+        await target.setSinkId(outputDeviceIdRef.current).catch(() =>
+          target.setSinkId("").catch(() => undefined),
+        );
+      }
+    };
+
+    const fallback = async () => {
+      output.pause();
+      output.srcObject = null;
+      source?.disconnect();
+      gain?.disconnect();
+      destination?.stream.getTracks().forEach((track) => track.stop());
+      gainRef.current = null;
+      outputModeRef.current = "element";
+      delete output.dataset.audioOutput;
+      element.dataset.audioOutput = "remote";
+      element.dataset.audioGain = "element";
+      element.volume = Math.min(1, Math.max(0, volumeRef.current));
+      element.muted = false;
+      await applyOutputDevice(element);
+      if (!cancelled) {
+        await element.play();
+      }
+    };
 
     try {
       if (!nativeTrack || nativeTrack.kind !== "audio") {
@@ -113,27 +156,36 @@ export function AudioTrack({
       delete output.dataset.audioOutput;
     }
 
-    const activeOutput =
-      outputModeRef.current === "webaudio" ? output : element;
-
     const start = async () => {
-      if ("setSinkId" in activeOutput) {
-        try {
-          await activeOutput.setSinkId(outputDeviceIdRef.current);
-        } catch {
-          await activeOutput.setSinkId("").catch(() => undefined);
-        }
-      }
-
-      if (cancelled) {
+      if (cancelled || starting) {
         return;
       }
+      starting = true;
+      try {
+        if (!attached) {
+          // Register the source with Jitsi too: its track replacement and
+          // first-media diagnostics depend on attached containers.
+          attached = true;
+          await track.attach(element);
+          if (nativeTrack && !cancelled) {
+            // Do not let a bundled/stalled video track gate audio playback.
+            element.srcObject = new MediaStream([nativeTrack]);
+          }
+        }
+        if (cancelled) {
+          return;
+        }
+        await element.play();
 
-      let graphReady = true;
-      if (context) {
+        if (outputModeRef.current === "element") {
+          await fallback();
+          return;
+        }
+
+        let graphReady = false;
         let resumeTimer: number | undefined;
         graphReady = await Promise.race([
-          context.resume().then(
+          context!.resume().then(
             () => context?.state === "running",
             () => false,
           ),
@@ -142,55 +194,75 @@ export function AudioTrack({
           }),
         ]);
         window.clearTimeout(resumeTimer);
-      }
-      if (outputModeRef.current === "webaudio" && graphReady) {
-        try {
-          await output.play();
+        if (cancelled) {
           return;
-        } catch {
-          // Fall back to direct playback when the processed stream is blocked.
         }
-      }
-
-      if (outputModeRef.current === "webaudio") {
-        output.pause();
-        output.srcObject = null;
-        source?.disconnect();
-        gain?.disconnect();
-        gainRef.current = null;
-        outputModeRef.current = "element";
-        delete output.dataset.audioOutput;
-        element.dataset.audioOutput = "remote";
-        element.dataset.audioGain = "element";
-        element.volume = Math.min(1, Math.max(0, volumeRef.current));
-      }
-
-      if (!cancelled) {
-        try {
-          await track.attach(element);
-          attachedFallback = true;
-          if (cancelled) {
-            track.detach(element);
-            attachedFallback = false;
+        if (graphReady) {
+          try {
+            await applyOutputDevice(output);
+            if (!cancelled) {
+              await output.play();
+            }
+            return;
+          } catch {
+            // Direct playback remains usable if processing/autoplay fails.
           }
-        } catch {
-          // A failed attachment leaves this participant silent, not the call.
+        }
+        await fallback();
+      } catch (error) {
+        if (!cancelled) {
+          element.dataset.audioPlayback = "blocked";
+          onPlaybackBlockedRef.current?.(true);
+          console.warn("Remote audio playback needs a retry", error);
+        }
+      } finally {
+        starting = false;
+        if (!cancelled && !element.paused &&
+            (outputModeRef.current === "element" || !output.paused)) {
+          element.dataset.audioPlayback = "playing";
+          onPlaybackBlockedRef.current?.(false);
         }
       }
     };
 
     void start();
+    const retry = () => { void start(); };
+    const resumeVisible = () => {
+      if (document.visibilityState === "visible") {
+        retry();
+      }
+    };
+    const resumeContext = () => {
+      if (context && context.state !== "running") {
+        retry();
+      }
+    };
+    document.addEventListener("pointerdown", retry);
+    document.addEventListener("ninjitsi:retry-audio", retry);
+    document.addEventListener("keydown", retry);
+    document.addEventListener("visibilitychange", resumeVisible);
+    nativeTrack?.addEventListener("unmute", retry);
+    context?.addEventListener("statechange", resumeContext);
 
     return () => {
       cancelled = true;
+      document.removeEventListener("pointerdown", retry);
+      document.removeEventListener("ninjitsi:retry-audio", retry);
+      document.removeEventListener("keydown", retry);
+      document.removeEventListener("visibilitychange", resumeVisible);
+      nativeTrack?.removeEventListener("unmute", retry);
+      context?.removeEventListener("statechange", resumeContext);
       gainRef.current = null;
       source?.disconnect();
       gain?.disconnect();
+      destination?.stream.getTracks().forEach((track) => track.stop());
       output.pause();
       output.srcObject = null;
-      if (attachedFallback) {
+      element.pause();
+      if (attached) {
         track.detach(element);
       }
+      onPlaybackBlockedRef.current?.(false);
     };
   }, [track, nativeTrack]);
 
@@ -234,6 +306,7 @@ export function AudioTrack({
     <>
       <audio
         autoPlay
+        playsInline
         data-audio-source="remote"
         data-output-volume={volume}
         data-participant-audio={participantId}
@@ -241,6 +314,7 @@ export function AudioTrack({
       />
       <audio
         autoPlay
+        playsInline
         data-audio-sink="remote"
         data-participant-audio={participantId}
         ref={outputRef}

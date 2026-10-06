@@ -781,7 +781,28 @@ npm run smoke:visual
 npm run smoke:audio
 ```
 
-`smoke:audio` measures the actual 0%, 100%, and 200% output of the remote-audio component in Chrome and checks browser microphone capture with suppression on and off. Set `NINJITSI_FAKE_AUDIO_FILE` to a local WAV recording containing speech to additionally assert that suppression does not turn voice into silence. No test recording is bundled with the repository.
+`smoke:audio` measures the component with a locally generated signal and checks browser microphone capture. It does not prove remote WebRTC playback. Set `NINJITSI_FAKE_AUDIO_FILE` to a local WAV recording containing speech to additionally assert that suppression does not turn voice into silence. No test recording is bundled with the repository.
+
+To check decoded remote audio, install the test Firefox build and run:
+
+```bash
+npx --no-install playwright-core install firefox
+npm run smoke:audio:remote
+```
+
+`smoke:audio:remote` does not require a running Ninjitsi or Jitsi server. It bundles the current audio renderer and sends real RTP between Chrome and Firefox in all four sender/receiver combinations. It measures the resulting audio samples at 0%, 100%, and 200%, tests mute/unmute, microphone and media-file sources, track reattachment, autoplay recovery, and direct-playback fallback. Unlike a local oscillator-only test, it catches Chromium's silent remote Web Audio path when the original received track is not consumed by a media element. Firefox's fake microphone does not enable noise processing; the test verifies recovery with processing off. Use a speech WAV fixture to check Chrome speech with processing on.
+
+Check the complete client, admission API, and Jitsi transport with:
+
+```bash
+NINJITSI_BASE_URL=http://localhost:3000 \
+NINJITSI_FAKE_AUDIO_FILE=/absolute/path/to/test-speech.wav \
+npm run smoke:audio:jitsi
+```
+
+`smoke:audio:jitsi` joins two Chrome clients and one Firefox client through the real UI. It measures every received voice stream, checks the two-person connection and three-person JVB connection, microphone/output selection, noise suppression on/off, and reception after the third participant leaves. The WAV fixture is recommended for meaningful noise-suppression testing. These tests measure decoded samples and playback state; listening with real microphones/headphones remains necessary to verify physical devices and acoustics.
+
+Set `NINJITSI_AUDIO_STABILITY_MS=21600000` to keep all three test clients connected and repeatedly measure every incoming audio stream for six hours. This complements the transport stability suite below.
 
 Run the real media suite against a reachable Jitsi instance:
 
