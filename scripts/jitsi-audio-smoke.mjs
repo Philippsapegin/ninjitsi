@@ -32,9 +32,34 @@ try {
       localStorage.setItem("ninjitsi.locale", "en");
       window.__audioTestPeerConnections = [];
       window.__audioTestLocalTracks = [];
+      window.__audioTestConnectionEvents = [];
+      let library;
+      Object.defineProperty(window, "JitsiMeetJS", {
+        configurable: true, get: () => library, set: value => {
+          library = value;
+          const init = value.JitsiConnection.prototype.initJitsiConference;
+          value.JitsiConnection.prototype.initJitsiConference = function(...args) {
+            const conference = init.apply(this, args);
+            window.__audioTestConference = conference;
+            for (const name of ["CONFERENCE_FAILED", "CONNECTION_INTERRUPTED", "CONNECTION_RESTORED", "P2P_STATUS"]) {
+              const event = value.events.conference[name];
+              if (event) conference.on(event, reason => window.__audioTestConnectionEvents.push({
+                at: Math.round(performance.now()), event: name,
+                reason: typeof reason === "string" || typeof reason === "boolean" ? reason : undefined,
+              }));
+            }
+            return conference;
+          };
+        },
+      });
       const PeerConnection = window.RTCPeerConnection;
       window.RTCPeerConnection = new Proxy(PeerConnection, { construct(target, args) {
-        const pc = new target(...args); window.__audioTestPeerConnections.push(pc); return pc;
+        const pc = new target(...args); window.__audioTestPeerConnections.push(pc);
+        pc.addEventListener("iceconnectionstatechange", () => window.__audioTestConnectionEvents.push({
+          at: Math.round(performance.now()), event: "ICE", state: pc.iceConnectionState,
+          index: window.__audioTestPeerConnections.indexOf(pc),
+        }));
+        return pc;
       } });
       const getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getUserMedia = async constraints => {
@@ -163,6 +188,35 @@ try {
   await sample(a, "after third participant leaves: Chrome receives Firefox", 1);
   await sample(b, "after third participant leaves: Firefox receives Chrome", 1);
   process.stdout.write(`Passed ${output.length} live Jitsi audio checks in room ${code}.\n`);
+} catch (error) {
+  for (const page of pages) {
+    process.stderr.write(`${JSON.stringify(await page.evaluate(async () => {
+      const connections = await Promise.all(window.__audioTestPeerConnections.map(async pc => {
+        const stats = await pc.getStats();
+        const selected = [...stats.values()].find(item => item.type === "transport" && item.selectedCandidatePairId);
+        const pair = selected && stats.get(selected.selectedCandidatePairId);
+        const remote = pair && stats.get(pair.remoteCandidateId);
+        return { state: pc.connectionState, ice: pc.iceConnectionState,
+          pair: pair && { rtt: pair.currentRoundTripTime, protocol: remote?.protocol, type: remote?.candidateType },
+          audio: [...stats.values()].filter(item => item.type === "inbound-rtp" && item.kind === "audio")
+            .map(item => ({ received: item.packetsReceived, lost: item.packetsLost, jitter: item.jitter,
+              concealed: item.concealedSamples, samples: item.totalSamplesReceived })),
+        };
+      }));
+      return { page: document.body.innerText.slice(0, 1500),
+        events: window.__audioTestConnectionEvents, connections,
+        participants: window.__audioTestConference?.getParticipants().map(participant => ({
+          name: participant.getDisplayName(), tracks: participant.getTracks().filter(track => track.getType() === "audio")
+            .map(track => ({ muted: track.isMuted(), state: track.getTrack()?.readyState, nativeMuted: track.getTrack()?.muted })),
+        })),
+        outputs: [...document.querySelectorAll('[data-audio-output="remote"]')].map(element => ({
+          id: element.dataset.participantAudio, paused: element.paused, muted: element.muted,
+          tracks: element.srcObject?.getAudioTracks().map(track => ({ state: track.readyState, enabled: track.enabled, muted: track.muted })),
+        })),
+      };
+    }).catch(failure => ({ error: failure.message })))}\n`);
+  }
+  throw error;
 } finally {
   for (const page of pages) {
     await page.getByRole("button", { name: "Leave call" }).click({ timeout: 3000 }).catch(() => undefined);

@@ -804,6 +804,8 @@ npm run smoke:audio:jitsi
 
 Set `NINJITSI_AUDIO_STABILITY_MS=21600000` to keep all three test clients connected and repeatedly measure every incoming audio stream for six hours. This complements the transport stability suite below.
 
+On failure, the audio suite prints ICE/conference event history, selected transport, participant tracks, and receiver playback state without dumping SDP or ICE credentials. RTP loss counters are observations, not proof of a network root cause; short successful runs do not rule out intermittent reconnects or long-call failures.
+
 Check actual decoded video, screen-stop recovery, and automatic recovery of a deliberately suspended video subscription:
 
 ```bash
