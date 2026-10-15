@@ -8,6 +8,7 @@ const executablePath = [process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
   "C:/Program Files/Google/Chrome/Application/chrome.exe", "/usr/bin/google-chrome", "/usr/bin/chromium",
 ].find((path) => path && existsSync(path));
 const chrome = await chromium.launch({ executablePath, headless: true, args: [
+  "--mute-audio",
   "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required",
   ...(process.env.NINJITSI_FAKE_AUDIO_FILE ? [`--use-file-for-fake-audio-capture=${process.env.NINJITSI_FAKE_AUDIO_FILE}`] : []),
 ] });
@@ -16,6 +17,7 @@ const pages = [];
 const output = [];
 try {
   fox = await firefox.launch({ headless: true, firefoxUserPrefs: {
+    "media.volume_scale": "0.0",
     "media.navigator.streams.fake": true, "media.navigator.permission.disabled": true,
     "media.autoplay.default": 0, "media.autoplay.block-webaudio": false,
   } });
@@ -138,6 +140,18 @@ try {
     assert.equal(await suppression.getAttribute("aria-checked"), "false");
   }
   await settings.getByRole("button", { name: "Close settings" }).click();
+  // Model a capture ended by the OS/browser (e.g. iOS interruption). A user
+  // retry must create and publish a new microphone, not unmute a dead track.
+  await a.evaluate(() => {
+    const track = window.__audioTestLocalTracks.filter(track => track.readyState === "live").at(-1);
+    if (!track) throw new Error("No live microphone to interrupt");
+    track.stop();
+    track.dispatchEvent(new Event("ended"));
+  });
+  await a.getByRole("button", { name: "Turn microphone on", exact: true }).click();
+  await a.getByRole("button", { name: "Turn microphone off", exact: true }).waitFor();
+  await sample(b, "JVB: microphone recaptured after OS ended capture", 2);
+  await sample(c, "JVB: second receiver hears recaptured microphone", 2);
   const stableUntil = Date.now() + stabilityMs;
   while (Date.now() < stableUntil) {
     await sample(a, "continuous audio: Chrome A", 2);

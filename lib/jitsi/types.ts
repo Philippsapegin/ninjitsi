@@ -11,12 +11,17 @@ export interface JitsiTrackLike {
   getDeviceId?: () => string;
   getId?: () => number | string;
   getParticipantId?: () => string;
+  getSourceName?: () => string | undefined;
   getTrack?: () => MediaStreamTrack | undefined;
   getType: () => MediaType;
   getVideoType?: () => "camera" | "desktop" | undefined;
   isLocal?: () => boolean;
   isMuted: () => boolean;
   mute: () => Promise<void>;
+  removeEventListener?: (
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ) => void;
   unmute: () => Promise<void>;
 }
 
@@ -55,6 +60,11 @@ export interface JitsiConferenceLike {
   sendTextMessage?: (message: string) => void;
   setDisplayName: (displayName: string) => void;
   setLocalParticipantProperty?: (name: string, value: string) => void;
+  setReceiverConstraints?: (constraints: {
+    lastN: number;
+    defaultConstraints: { maxHeight: number };
+    constraints: Record<string, { maxHeight: number }>;
+  }) => void;
 }
 
 export interface JitsiConnectionLike {

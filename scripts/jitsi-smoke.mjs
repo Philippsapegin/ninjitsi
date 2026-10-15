@@ -210,6 +210,7 @@ async function assertTokenlessJitsiRejected(browserContext, protectedRoomName) {
 const roomName = await createServerRoom();
 const browser = await chromium.launch({
   args: [
+    "--mute-audio",
     "--allow-http-screen-capture",
     "--auto-select-desktop-capture-source=Entire screen",
     "--enable-usermedia-screen-capturing",

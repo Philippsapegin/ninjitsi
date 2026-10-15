@@ -748,7 +748,7 @@ npm run typecheck
 npm run build:cloudflare
 ```
 
-`npm test` covers room-code entropy, rate limiting, `scrypt` concurrency, JWT signatures and claims, expiration migration, non-evicting capacity, security headers, and admission-token issuance.
+`npm test` covers room-code entropy, rate limiting, `scrypt` concurrency, JWT signatures and claims, expiration migration, non-evicting capacity, security headers, and admission-token issuance. It also checks portable microphone constraints (including iPhone Safari/Chrome), expired device identifiers, permission denial, camera selection after screen sharing, adaptive receiver constraints, and video-recovery timing. Simulated six-hour clock tests are not a six-hour real call.
 
 Validate the production Compose model without printing its expanded secret:
 
@@ -800,9 +800,19 @@ NINJITSI_FAKE_AUDIO_FILE=/absolute/path/to/test-speech.wav \
 npm run smoke:audio:jitsi
 ```
 
-`smoke:audio:jitsi` joins two Chrome clients and one Firefox client through the real UI. It measures every received voice stream, checks the two-person connection and three-person JVB connection, microphone/output selection, noise suppression on/off, and reception after the third participant leaves. The WAV fixture is recommended for meaningful noise-suppression testing. These tests measure decoded samples and playback state; listening with real microphones/headphones remains necessary to verify physical devices and acoustics.
+`smoke:audio:jitsi` joins two Chrome clients and one Firefox client through the real UI. It measures every received voice stream, checks the two-person connection and three-person JVB connection, microphone/output selection, noise suppression on/off, microphone recovery after a simulated OS capture-ended event, and reception after the third participant leaves. Test browsers suppress physical speaker output without muting the measured streams. The WAV fixture is recommended for meaningful noise-suppression testing. These tests measure decoded samples and playback state; listening with real microphones/headphones remains necessary to verify physical devices and acoustics.
 
 Set `NINJITSI_AUDIO_STABILITY_MS=21600000` to keep all three test clients connected and repeatedly measure every incoming audio stream for six hours. This complements the transport stability suite below.
+
+Check actual decoded video, screen-stop recovery, and automatic recovery of a deliberately suspended video subscription:
+
+```bash
+NINJITSI_BASE_URL=http://localhost:3000 npm run smoke:video:jitsi
+```
+
+`smoke:video:jitsi` joins three Chrome clients through the real UI and Jitsi transport. It asserts that new frames are decoded, not just that a `<video>` element exists. It checks repeated camera → screen → camera transitions with both the app's stop button and a simulated browser capture-ended event, deliberately suspends a received camera, pauses playback, and lowers the subscription to 180p. It checks automatic playback/subscription recovery, quality recovery after a sustained drop, and screen sharing after the third participant leaves. Screen content is synthetic, but publication, signalling, RTP and decoding use the real Jitsi stack. Static screen shares and background tabs do not trigger the camera-freeze watchdog. Allow a few minutes for this suite's recovery timeouts.
+
+Set `NINJITSI_VIDEO_STABILITY_MS=7200000` for two additional hours of continuously sampled video, or `21600000` for six. A physical iPhone/Safari check is still necessary: desktop user-agent tests cannot prove iOS permissions, audio routing or background capture behavior.
 
 Run the real media suite against a reachable Jitsi instance:
 

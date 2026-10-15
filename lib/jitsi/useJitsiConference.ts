@@ -13,10 +13,15 @@ import {
   readMediaPreferences,
   saveMediaPreferences,
 } from "./mediaPreferences";
+import { isNoiseSuppressionSupported } from "./noiseSuppression";
+import { createLocalTrack, isMediaPermissionError } from "./mediaDevices";
 import {
-  createBrowserMicrophoneTrack,
-  isNoiseSuppressionSupported,
-} from "./noiseSuppression";
+  applyReceiveVideoPolicy,
+  isTrackEnded,
+  pickPreferredVideo,
+  SCREEN_SHARING_PROPERTY,
+  VIDEO_RECOVERY_EVENT,
+} from "./videoPolicy";
 import type {
   ChatAttachment,
   ChatMessage,
@@ -775,74 +780,6 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
   );
 }
 
-async function createLocalTrack(
-  library: JitsiMeetJSLibrary,
-  device: LocalMediaDevice,
-  deviceId = "",
-  noiseSuppressionEnabled = false,
-  browserCapture = true,
-) {
-  // Chromium accepts "default" as a synthetic device id and needs it to
-  // reliably follow the operating-system microphone. Firefox selects the
-  // microphone in its permission prompt and may reject that synthetic id
-  // before getUserMedia is called, leaving the user with no prompt at all.
-  const defaultMicrophoneId = /\bFirefox\//.test(navigator.userAgent)
-    ? ""
-    : "default";
-  const microphoneId = deviceId || defaultMicrophoneId;
-  if (
-    browserCapture &&
-    device === "audio" &&
-    isNoiseSuppressionSupported() &&
-    library.createLocalTracksFromMediaStreams
-  ) {
-    return createBrowserMicrophoneTrack(
-      library,
-      microphoneId,
-      noiseSuppressionEnabled,
-    );
-  }
-
-  const tracks = await library.createLocalTracks({
-    devices: [device],
-    ...(device === "audio" && microphoneId
-      ? { micDeviceId: microphoneId }
-      : {}),
-    ...(device === "video" && deviceId ? { cameraDeviceId: deviceId } : {}),
-    ...(device === "video" ? { resolution: 720 } : {}),
-  });
-  const track = tracks.find((candidate) =>
-    device === "desktop"
-      ? candidate.getVideoType?.() === "desktop"
-      : candidate.getType() === device,
-  );
-  const unusedTracks = tracks.filter((candidate) => candidate !== track);
-
-  await Promise.allSettled(
-    unusedTracks.map((unusedTrack) => unusedTrack.dispose()),
-  );
-
-  if (!track) {
-    throw new Error(`Jitsi did not create a ${device} track`);
-  }
-
-  return track;
-}
-
-function pickPreferredVideo(tracks: JitsiTrackLike[]) {
-  const videoTracks = tracks.filter((track) => track.getType() === "video");
-  const activeDesktop = videoTracks.find(
-    (track) =>
-      track.getVideoType?.() === "desktop" &&
-      !track.isMuted(),
-  );
-  const camera = videoTracks.find(
-    (track) => track.getVideoType?.() !== "desktop",
-  );
-
-  return activeDesktop ?? camera ?? videoTracks[0];
-}
-
 function createDemoParticipants(
   displayName: string,
   avatarUrl: string,
@@ -931,10 +868,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const desktopRemovalRef = useRef(new WeakSet<JitsiTrackLike>());
+  const videoTrackListenersRef = useRef(new Map<JitsiTrackLike, () => void>());
+  const videoRecoveryTimersRef = useRef(new Map<string, number>());
+  const videoRecoveryAtRef = useRef(new Map<string, number>());
   const audioBusyRef = useRef(false);
   const videoBusyRef = useRef(false);
   const screenShareBusyRef = useRef(false);
   const audioMeterRef = useRef<{
+    nativeTrack: MediaStreamTrack;
     stop: () => void;
     track: JitsiTrackLike;
   } | null>(null);
@@ -1003,10 +944,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
           noiseSuppressionEnabledRef.current,
         );
       } catch (error) {
-        if (
-          error instanceof DOMException &&
-          (error.name === "NotAllowedError" || error.name === "SecurityError")
-        ) {
+        if (isMediaPermissionError(error)) {
           throw error;
         }
 
@@ -1051,15 +989,15 @@ export function useJitsiConference(roomName: string): ConferenceController {
   );
 
   const watchLocalAudioLevel = useCallback((track?: JitsiTrackLike) => {
-    if (audioMeterRef.current?.track === track) {
+    const nativeTrack = track?.getTrack?.();
+    if (audioMeterRef.current?.track === track && audioMeterRef.current?.nativeTrack === nativeTrack) {
       return;
     }
 
     audioMeterRef.current?.stop();
     audioMeterRef.current = null;
     setLocalAudioLevel(0);
-    const nativeTrack = track?.getTrack?.();
-    if (!track || !nativeTrack) {
+    if (!track || !nativeTrack || nativeTrack.readyState === "ended") {
       return;
     }
 
@@ -1088,9 +1026,18 @@ export function useJitsiConference(roomName: string): ConferenceController {
         setLocalAudioLevel(track.isMuted() ? 0 : Math.min(1, rms * 6));
       }, 80);
 
+      const stopped = () => {
+        setIsAudioMuted(true);
+        setLocalAudioLevel(0);
+        setParticipants(current => current.map(participant => participant.isLocal
+          ? { ...participant, audioMuted: true } : participant));
+      };
+      nativeTrack.addEventListener("ended", stopped);
       audioMeterRef.current = {
+        nativeTrack,
         track,
         stop: () => {
+          nativeTrack.removeEventListener("ended", stopped);
           window.clearInterval(interval);
           source.disconnect();
           analyser.disconnect();
@@ -1127,7 +1074,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     }
 
     const localTracks = conference.getLocalTracks();
-    const localVideo = pickPreferredVideo(localTracks);
+    const localVideo = pickPreferredVideo(localTracks.filter(track => !desktopRemovalRef.current.has(track)));
     const localAudio = localTracks.find((track) => track.getType() === "audio");
     watchLocalAudioLevel(localAudio);
     const remote = conference
@@ -1135,7 +1082,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
       .filter((participant) => !participant.isHidden?.())
       .map<ParticipantView>((participant) => {
         const tracks = participant.getTracks();
-        const videoTrack = pickPreferredVideo(tracks);
+        const sharingProperty = participant.getProperty?.(SCREEN_SHARING_PROPERTY);
+        const videoTrack = pickPreferredVideo(tracks,
+          typeof sharingProperty === "string"
+            ? sharingProperty === "false" ? false : sharingProperty === "true" ? true : sharingProperty
+            : undefined);
         const audioTrack = tracks.find((track) => track.getType() === "audio");
         const audioTracks = tracks.filter((track) => track.getType() === "audio");
         const videoBackgroundRevision =
@@ -1180,14 +1131,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
             receivedBackground?.revision === videoBackgroundRevision
               ? receivedBackground.dataUrl
               : undefined,
-          videoMuted: videoTrack
-            ? videoTrack.isMuted()
-            : participant.isVideoMuted(),
+          videoMuted: !videoTrack || videoTrack.isMuted(),
           videoTrack,
         };
       });
 
-    const audioMuted = !localAudio || localAudio.isMuted();
+    const audioMuted = !localAudio || localAudio.isMuted() || isTrackEnded(localAudio);
     if (audioMuted) {
       setLocalAudioLevel(0);
     }
@@ -1197,11 +1146,13 @@ export function useJitsiConference(roomName: string): ConferenceController {
         track.getVideoType?.() !== "desktop",
     );
     const videoMuted =
-      cameraTracks.length === 0 || cameraTracks.every((track) => track.isMuted());
+      cameraTracks.length === 0 || cameraTracks.every((track) => track.isMuted() || isTrackEnded(track));
     const sharing = localTracks.some(
       (track) =>
         track.getType() === "video" &&
         track.getVideoType?.() === "desktop" &&
+        !isTrackEnded(track) &&
+        !desktopRemovalRef.current.has(track) &&
         !track.isMuted(),
     );
 
@@ -1237,8 +1188,94 @@ export function useJitsiConference(roomName: string): ConferenceController {
     queueMicrotask(syncParticipants);
   }, [syncParticipants]);
 
+  const refreshVideoPolicy = useCallback(() => {
+    const conference = conferenceRef.current;
+    if (!conference || disposedRef.current) return;
+    // Source changes can arrive while a single source is briefly suspended by
+    // recovery. Restore it before computing the new complete subscription.
+    for (const timer of videoRecoveryTimersRef.current.values()) window.clearTimeout(timer);
+    videoRecoveryTimersRef.current.clear();
+    applyReceiveVideoPolicy(conference);
+  }, []);
+
+  const syncVideoTracks = useCallback(() => {
+    const conference = conferenceRef.current;
+    const library = libraryRef.current;
+    if (!conference || !library || disposedRef.current) return;
+    const tracks = [...conference.getLocalTracks(), ...conference.getParticipants().flatMap(p => p.getTracks())]
+      .filter(track => track.getType() === "video");
+    for (const [track, cleanup] of videoTrackListenersRef.current) {
+      if (!tracks.includes(track)) {
+        cleanup();
+        videoTrackListenersRef.current.delete(track);
+      }
+    }
+    for (const track of tracks) {
+      if (videoTrackListenersRef.current.has(track)) continue;
+      const events = [library.events.track.TRACK_VIDEOTYPE_CHANGED,
+        library.events.track.TRACK_MUTE_CHANGED, library.events.track.LOCAL_TRACK_STOPPED].filter(Boolean);
+      const nativeTrack = track.getTrack?.();
+      const refresh = () => {
+        if (conferenceRef.current !== conference || disposedRef.current) return;
+        scheduleParticipantSync();
+        refreshVideoPolicy();
+      };
+      events.forEach(event => track.addEventListener?.(event, refresh));
+      nativeTrack?.addEventListener("ended", refresh);
+      nativeTrack?.addEventListener("unmute", refresh);
+      videoTrackListenersRef.current.set(track, () => {
+        events.forEach(event => track.removeEventListener?.(event, refresh));
+        nativeTrack?.removeEventListener("ended", refresh);
+        nativeTrack?.removeEventListener("unmute", refresh);
+      });
+    }
+    scheduleParticipantSync();
+    refreshVideoPolicy();
+  }, [refreshVideoPolicy, scheduleParticipantSync]);
+
+  useEffect(() => {
+    const recover = (event: Event) => {
+      const conference = conferenceRef.current;
+      const track = (event as CustomEvent<{ track: JitsiTrackLike }>).detail?.track;
+      if (!conference || !track || disposedRef.current || track.isMuted() || isTrackEnded(track) ||
+          !conference.getParticipants().some(p => p.getTracks().includes(track))) return;
+      const source = track.getSourceName?.();
+      if (!source || videoRecoveryTimersRef.current.has(source)) return;
+      const now = performance.now();
+      if (now - (videoRecoveryAtRef.current.get(source) ?? -Infinity) < 60_000) return;
+      videoRecoveryAtRef.current.set(source, now);
+      // Briefly stop ONLY this video subscription. Re-enabling requests a fresh
+      // keyframe/layer from the bridge or P2P peer; microphone/audio are untouched.
+      applyReceiveVideoPolicy(conference, source);
+      videoRecoveryTimersRef.current.set(source, window.setTimeout(() => {
+        videoRecoveryTimersRef.current.delete(source);
+        if (conferenceRef.current === conference && !disposedRef.current) {
+          applyReceiveVideoPolicy(conference);
+        }
+      }, 400));
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") {
+        syncVideoTracks();
+      }
+    };
+    window.addEventListener(VIDEO_RECOVERY_EVENT, recover);
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("online", visible);
+    return () => {
+      window.removeEventListener(VIDEO_RECOVERY_EVENT, recover);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("online", visible);
+    };
+  }, [syncVideoTracks]);
+
   const teardown = useCallback(async () => {
     disposedRef.current = true;
+    for (const cleanup of videoTrackListenersRef.current.values()) cleanup();
+    videoTrackListenersRef.current.clear();
+    for (const timer of videoRecoveryTimersRef.current.values()) window.clearTimeout(timer);
+    videoRecoveryTimersRef.current.clear();
+    videoRecoveryAtRef.current.clear();
     audioMeterRef.current?.stop();
     audioMeterRef.current = null;
     const conference = conferenceRef.current;
@@ -1502,6 +1539,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
             localIdRef.current =
               conference.myUserId?.() || localIdRef.current;
             conference.setDisplayName(options.displayName);
+            conference.setLocalParticipantProperty?.(SCREEN_SHARING_PROPERTY, "false");
+            applyReceiveVideoPolicy(conference);
             conference.setLocalParticipantProperty?.(
               "avatarURL",
               options.avatarDataUrl,
@@ -1606,7 +1645,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
             ].filter(Boolean);
 
             resyncEvents.forEach((eventName) =>
-              conference.on(eventName, scheduleParticipantSync),
+              conference.on(eventName, syncVideoTracks),
             );
 
             if (conferenceEvents.USER_JOINED) {
@@ -1628,6 +1667,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
                   return;
                 }
                 videoBackgroundChannelOpenRef.current = true;
+                refreshVideoPolicy();
                 void publishVideoBackground();
               });
             }
@@ -2077,9 +2117,13 @@ export function useJitsiConference(roomName: string): ConferenceController {
             conference.on(conferenceEvents.CONNECTION_INTERRUPTED, () =>
               setStatus("reconnecting"),
             );
-            conference.on(conferenceEvents.CONNECTION_RESTORED, () =>
-              setStatus("joined"),
-            );
+            conference.on(conferenceEvents.CONNECTION_RESTORED, () => {
+              setStatus("joined");
+              syncVideoTracks();
+            });
+            if (conferenceEvents.P2P_STATUS) {
+              conference.on(conferenceEvents.P2P_STATUS, syncVideoTracks);
+            }
             conference.on(conferenceEvents.CONFERENCE_JOINED, async () => {
               hasJoinedRef.current = true;
               reconnectAttemptRef.current = 0;
@@ -2291,7 +2335,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
       createConfiguredAudioTrack,
       isDemo,
       roomName,
-      scheduleParticipantSync,
+      syncVideoTracks,
+      refreshVideoPolicy,
       scheduleFullReconnect,
       serverUrl,
       setMediaBusy,
@@ -2336,7 +2381,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     try {
       const currentTrack = conference.getLocalTracks("audio").find(Boolean);
 
-      if (currentTrack) {
+      if (currentTrack && !isTrackEnded(currentTrack)) {
         if (currentTrack.isMuted()) {
           await currentTrack.unmute();
         } else {
@@ -2357,7 +2402,14 @@ export function useJitsiConference(roomName: string): ConferenceController {
         }
 
         try {
-          await conference.addTrack(newTrack);
+          if (currentTrack && conference.replaceTrack) {
+            await conference.replaceTrack(currentTrack, newTrack);
+            await currentTrack.dispose().catch(() => undefined);
+          } else {
+            if (currentTrack) await conference.removeTrack(currentTrack);
+            await conference.addTrack(newTrack);
+            await currentTrack?.dispose().catch(() => undefined);
+          }
         } catch (publishError) {
           await newTrack.dispose().catch(() => undefined);
           throw publishError;
@@ -2446,6 +2498,28 @@ export function useJitsiConference(roomName: string): ConferenceController {
     }
   }, [isDemo, setMediaBusy, syncParticipants]);
 
+  const stopScreenShare = useCallback(async (conference: JitsiConferenceLike, desktop: JitsiTrackLike) => {
+    if (desktopRemovalRef.current.has(desktop)) return;
+    desktopRemovalRef.current.add(desktop);
+    // Remote SDKs can keep a live, unmuted desktop receiver after source-remove.
+    // Presence is the authoritative UI signal, not the lifetime of that receiver.
+    if (conferenceRef.current === conference && !disposedRef.current) {
+      conference.setLocalParticipantProperty?.(SCREEN_SHARING_PROPERTY, "false");
+      setIsScreenSharing(false);
+      syncParticipants();
+    }
+    try {
+      // Keep the desktop source/SDP slot muted until the next share. Removing an
+      // already-ended capture can leave a ghost receiver and inactive encodings
+      // when this SDK reuses the source across a P2P/JVB transition. Replacing a
+      // muted desktop with a fresh desktop is the supported same-type path.
+      await desktop.mute();
+    } finally {
+      desktop.getTrack?.()?.stop();
+      if (conferenceRef.current === conference && !disposedRef.current) syncVideoTracks();
+    }
+  }, [syncParticipants, syncVideoTracks]);
+
   const toggleScreenShare = useCallback(async () => {
     if (isDemo) {
       setIsScreenSharing((sharing) => {
@@ -2478,76 +2552,28 @@ export function useJitsiConference(roomName: string): ConferenceController {
     try {
       const currentDesktop = conference
         .getLocalTracks("video")
-        .find((track) => track.getVideoType?.() === "desktop");
+        .find((track) => track.getVideoType?.() === "desktop" &&
+          !desktopRemovalRef.current.has(track) && !isTrackEnded(track));
 
       if (currentDesktop) {
-        const cameraTrack = conference
-          .getLocalTracks("video")
-          .find((track) => track.getVideoType?.() !== "desktop");
-
-        setIsScreenSharing(false);
-        setParticipants((current) =>
-          current.map((participant) =>
-            participant.isLocal
-              ? {
-                  ...participant,
-                  isScreenSharing: false,
-                  videoMuted: cameraTrack
-                    ? cameraTrack.isMuted()
-                    : true,
-                  videoTrack: cameraTrack,
-                }
-              : participant,
-          ),
-        );
-        desktopRemovalRef.current.add(currentDesktop);
-        try {
-          await conference.removeTrack(currentDesktop);
-        } finally {
-          await currentDesktop.dispose().catch(() => undefined);
-        }
+        await stopScreenShare(conference, currentDesktop);
         return;
       }
 
       const desktopTrack = await createLocalTrack(library, "desktop");
+      const parkedDesktop = conference.getLocalTracks("video")
+        .find(track => track.getVideoType?.() === "desktop");
       const stoppedEvent = library.events.track.LOCAL_TRACK_STOPPED;
 
       if (stoppedEvent) {
         desktopTrack.addEventListener?.(stoppedEvent, () => {
-          if (desktopRemovalRef.current.has(desktopTrack)) {
-            return;
-          }
-
-          desktopRemovalRef.current.add(desktopTrack);
-          const cameraTrack = conference
-            .getLocalTracks("video")
-            .find((track) => track.getVideoType?.() !== "desktop");
-
-          setIsScreenSharing(false);
-          setParticipants((current) =>
-            current.map((participant) =>
-              participant.isLocal
-                ? {
-                    ...participant,
-                    isScreenSharing: false,
-                    videoMuted: cameraTrack
-                      ? cameraTrack.isMuted()
-                      : true,
-                    videoTrack: cameraTrack,
-                  }
-                : participant,
-            ),
-          );
-          void (async () => {
-            await conference
-              .removeTrack(desktopTrack)
-              .catch(() => undefined);
-            await desktopTrack.dispose().catch(() => undefined);
-
-            if (conferenceRef.current === conference) {
-              syncParticipants();
+          // Ignore a stale capture callback from a conference we already left.
+          if (conferenceRef.current !== conference || disposedRef.current) return;
+          void stopScreenShare(conference, desktopTrack).catch(error => {
+            if (conferenceRef.current === conference && !disposedRef.current) {
+              setError(mediaErrorMessage("desktop", error));
             }
-          })();
+          });
         });
       }
 
@@ -2575,7 +2601,19 @@ export function useJitsiConference(roomName: string): ConferenceController {
       );
 
       try {
-        await conference.addTrack(desktopTrack);
+        if (parkedDesktop && conference.replaceTrack) {
+          await conference.replaceTrack(parkedDesktop, desktopTrack);
+          await parkedDesktop.dispose().catch(() => undefined);
+        } else {
+          if (parkedDesktop) {
+            await conference.removeTrack(parkedDesktop);
+            await parkedDesktop.dispose().catch(() => undefined);
+          }
+          await conference.addTrack(desktopTrack);
+        }
+        if (!desktopRemovalRef.current.has(desktopTrack) && !isTrackEnded(desktopTrack)) {
+          conference.setLocalParticipantProperty?.(SCREEN_SHARING_PROPERTY, desktopTrack.getSourceName?.() || "true");
+        }
       } catch (publishError) {
         desktopRemovalRef.current.add(desktopTrack);
         await desktopTrack.dispose().catch(() => undefined);
@@ -2587,7 +2625,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setMediaBusy("desktop", false);
       syncParticipants();
     }
-  }, [isDemo, setMediaBusy, syncParticipants]);
+  }, [isDemo, setMediaBusy, stopScreenShare, syncParticipants]);
 
   const replaceInputTrack = useCallback(
     async (device: "audio" | "video", deviceId: string) => {

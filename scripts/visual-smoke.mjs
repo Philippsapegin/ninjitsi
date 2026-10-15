@@ -44,7 +44,7 @@ const chatScreenshotPath = join(
   tmpdir(),
   `ninjitsi-chat-${Date.now()}.png`,
 );
-const browser = await chromium.launch({ executablePath, headless: true });
+const browser = await chromium.launch({ executablePath, headless: true, args: ["--mute-audio"] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
 await page.addInitScript(() => {

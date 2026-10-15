@@ -24,7 +24,10 @@ export async function createBrowserMicrophoneTrack(
   const nativeTrack = stream.getAudioTracks()[0];
 
   try {
-    if (!nativeTrack || nativeTrack.getSettings().noiseSuppression !== enabled) {
+    const applied = nativeTrack?.getSettings().noiseSuppression;
+    // Safari may accept this constraint without exposing it in getSettings().
+    // Lack of this optional field must not destroy an otherwise valid mic.
+    if (!nativeTrack || (typeof applied === "boolean" && applied !== enabled)) {
       throw new Error("The browser did not apply the noise suppression setting.");
     }
 

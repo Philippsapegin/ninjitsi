@@ -100,6 +100,11 @@ const bundle = await build({
       async accept(offer, failure) {
         if(failure === 'autoplay') {
           window.__audioTestPlaybackAllowed=false;
+          new MutationObserver(() => {
+            if (!window.__audioTestPlaybackAllowed) {
+              document.querySelectorAll('audio,video').forEach(element => { element.autoplay=false; element.pause(); });
+            }
+          }).observe(document.body, { childList:true, subtree:true });
           const play=HTMLMediaElement.prototype.play;
           HTMLMediaElement.prototype.play=function(){
             return window.__audioTestPlaybackAllowed ? play.call(this)
@@ -117,7 +122,7 @@ const bundle = await build({
         pc=new RTCPeerConnection();
         pc.ontrack=e=> {
           nativeTrack=e.track;
-          track={getTrack:()=>nativeTrack,getType:()=> 'audio',isLocal:()=>false,
+          track={getTrack:()=>nativeTrack,getType:()=> 'audio',isLocal:()=>false,isMuted:()=>false,
             attach:async el=>{attachCount++;el.srcObject=e.streams[0] ?? new MediaStream([nativeTrack]);},
             detach:el=>{detachCount++;if(el)el.srcObject=null;}};
           root=createRoot(document.body.appendChild(document.createElement('div'))); render();
@@ -162,6 +167,7 @@ const server = createServer((request, response) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const testUrl = `http://127.0.0.1:${server.address().port}`;
 const chrome = await chromium.launch({ executablePath: chromePath, headless: true, args: [
+  "--mute-audio",
   "--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
   ...(process.env.NINJITSI_FAKE_AUDIO_FILE ? [`--use-file-for-fake-audio-capture=${process.env.NINJITSI_FAKE_AUDIO_FILE}`] : []),
 ] });
@@ -169,6 +175,7 @@ let fox;
 const results = [];
 try {
   fox = await firefox.launch({ headless: true, firefoxUserPrefs: {
+    "media.volume_scale": "0.0",
     "media.navigator.streams.fake": true, "media.navigator.permission.disabled": true,
     "media.autoplay.default": 0, "media.autoplay.block-webaudio": false,
   } });

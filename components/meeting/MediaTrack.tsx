@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import type { JitsiTrackLike } from "@/lib/jitsi/types";
+import { createVideoHealthMonitor } from "@/lib/jitsi/videoHealth";
+import { VIDEO_RECOVERY_EVENT } from "@/lib/jitsi/videoPolicy";
 
 let sharedAudioContext: AudioContext | null = null;
 
@@ -18,8 +20,9 @@ interface VideoTrackProps {
   track: JitsiTrackLike;
 }
 
-export function VideoTrack({ track }: VideoTrackProps) {
+export function VideoTrack({ track, isLocal }: VideoTrackProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const nativeTrack = track.getTrack?.();
 
   useEffect(() => {
     const element = videoRef.current;
@@ -28,10 +31,59 @@ export function VideoTrack({ track }: VideoTrackProps) {
       return;
     }
 
-    void track.attach(element);
+    let cancelled = false;
+    let attaching = false;
+    let attached = false;
+    const monitor = createVideoHealthMonitor();
+    const attach = async () => {
+      if (cancelled || attaching) return;
+      attaching = true;
+      try {
+        if (attached) track.detach(element);
+        attached = true;
+        await track.attach(element);
+        if (cancelled) return;
+        element.muted = true;
+        await element.play();
+      } catch {
+        // Muted video can still be interrupted by backgrounding/Safari. Retry
+        // on visibility/unmute and through the watchdog, without unhandled play().
+      } finally {
+        attaching = false;
+      }
+    };
+    const resume = () => {
+      if (document.visibilityState === "visible") void attach();
+    };
+    void attach();
+    document.addEventListener("visibilitychange", resume);
+    nativeTrack?.addEventListener("unmute", resume);
+    const timer = window.setInterval(() => {
+      const active = document.visibilityState === "visible" && !track.isMuted() &&
+        nativeTrack?.readyState !== "ended" && nativeTrack?.enabled !== false;
+      const action = monitor({
+        now: performance.now(),
+        frames: element.getVideoPlaybackQuality?.().totalVideoFrames ?? element.currentTime,
+        height: element.videoHeight,
+        active,
+        // A still screen may legitimately deliver no new frames for minutes.
+        screen: isLocal || (track.getVideoType?.() === "desktop" && element.videoWidth > 0),
+      });
+      if (active && element.paused) void attach();
+      else if (action === "reattach") void attach();
+      else if (action === "resubscribe") {
+        window.dispatchEvent(new CustomEvent(VIDEO_RECOVERY_EVENT, { detail: { track } }));
+      }
+    }, 2000);
 
-    return () => track.detach(element);
-  }, [track]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", resume);
+      nativeTrack?.removeEventListener("unmute", resume);
+      if (attached) track.detach(element);
+    };
+  }, [isLocal, nativeTrack, track]);
 
   return (
     <video

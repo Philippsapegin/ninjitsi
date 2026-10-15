@@ -19,7 +19,7 @@ if (!executablePath) {
 }
 
 const baseUrl = process.env.NINJITSI_BASE_URL ?? "http://localhost:3000";
-const browser = await chromium.launch({ executablePath, headless: true });
+const browser = await chromium.launch({ executablePath, headless: true, args: ["--mute-audio"] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 
 await page.addInitScript(() => {
