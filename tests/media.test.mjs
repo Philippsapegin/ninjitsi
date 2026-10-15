@@ -143,4 +143,8 @@ test("watchdog ignores static screens, hidden tabs and muted sources, and retrie
   assert.equal(sample(244000, 1000, { height: 180 }), "resubscribe");
   assert.equal(sample(246000, 1001, { height: 180 }), undefined);
   assert.equal(sample(248000, 1002, { height: 720 }), undefined);
+  const from360 = media.createVideoHealthMonitor();
+  from360({ now: 0, frames: 1, height: 360, active: true, screen: false });
+  from360({ now: 2000, frames: 2, height: 180, active: true, screen: false });
+  assert.equal(from360({ now: 62000, frames: 100, height: 180, active: true, screen: false }), "resubscribe");
 });

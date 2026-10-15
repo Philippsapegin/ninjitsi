@@ -27,7 +27,7 @@ export function createVideoHealthMonitor() {
     }
     frames = sample.frames;
     bestHeight = Math.max(bestHeight, sample.height);
-    if (bestHeight >= 360 && sample.height > 0 && sample.height < bestHeight / 2) {
+    if (bestHeight >= 360 && sample.height > 0 && sample.height <= bestHeight / 2) {
       lowSince ??= sample.now;
     } else {
       lowSince = null;
