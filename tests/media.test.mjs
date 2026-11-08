@@ -8,8 +8,21 @@ const bundle = await build({ bundle: true, platform: "node", format: "esm", writ
     export * from './lib/jitsi/noiseSuppression.ts';
     export * from './lib/jitsi/videoPolicy.ts';
     export * from './lib/jitsi/videoHealth.ts';
+    export * from './lib/jitsi/participantSessions.ts';
   ` } });
 const media = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+
+test("rejoining tab supersedes only its older endpoint, never matching display names", () => {
+  const participant = (id, tab, generation) => ({ getId: () => id, getDisplayName: () => "Alice",
+    getProperty: () => tab ? JSON.stringify({ tab, generation }) : undefined });
+  const old = participant("old", "tab-identity-12345678901", 1);
+  const fresh = participant("fresh", "tab-identity-12345678901", 2);
+  const other = participant("other", "different-tab-1234567890", 1);
+  const legacy = participant("legacy");
+  const latest = new Map();
+  assert.deepEqual(media.currentParticipantSessions([old, other, fresh, legacy], latest), [other, fresh, legacy]);
+  assert.deepEqual(media.currentParticipantSessions([old, other, legacy], latest), [other, legacy], "old endpoint must not reappear when replacement leaves");
+});
 
 function navigatorFor(t, userAgent, mediaDevices = {}) {
   const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");

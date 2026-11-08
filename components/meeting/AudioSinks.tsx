@@ -8,12 +8,14 @@ import { AudioTrack } from "./MediaTrack";
 import styles from "./AudioSinks.module.css";
 
 interface AudioSinksProps {
+  readReceiverStats?: (track: MediaStreamTrack) => Promise<RTCStatsReport | undefined>;
   outputDeviceId: string;
   participantVolumes: Record<string, number>;
   participants: ParticipantView[];
 }
 
 export function AudioSinks({
+  readReceiverStats,
   outputDeviceId,
   participantVolumes,
   participants,
@@ -46,6 +48,7 @@ export function AudioSinks({
       <div aria-hidden="true">
         {remoteTracks.map(({ key, participant, track }) => (
           <AudioTrack
+            readReceiverStats={readReceiverStats}
             key={key}
             onPlaybackBlocked={(blocked) => reportBlocked(key, blocked)}
             outputDeviceId={outputDeviceId}

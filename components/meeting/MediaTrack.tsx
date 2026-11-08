@@ -4,16 +4,8 @@ import { useEffect, useRef } from "react";
 import type { JitsiTrackLike } from "@/lib/jitsi/types";
 import { createVideoHealthMonitor } from "@/lib/jitsi/videoHealth";
 import { VIDEO_RECOVERY_EVENT } from "@/lib/jitsi/videoPolicy";
-
-let sharedAudioContext: AudioContext | null = null;
-
-function getAudioContext() {
-  if (!sharedAudioContext || sharedAudioContext.state === "closed") {
-    sharedAudioContext = new window.AudioContext();
-  }
-
-  return sharedAudioContext;
-}
+import { getMeetingAudioContext } from "@/lib/audioContext";
+import { recordAudioDiagnostic } from "@/lib/jitsi/audioDiagnostics";
 
 interface VideoTrackProps {
   isLocal: boolean;
@@ -99,6 +91,7 @@ export function VideoTrack({ track, isLocal }: VideoTrackProps) {
 }
 
 interface AudioTrackProps {
+  readReceiverStats?: (track: MediaStreamTrack) => Promise<RTCStatsReport | undefined>;
   onPlaybackBlocked?: (blocked: boolean) => void;
   outputDeviceId: string;
   participantId: string;
@@ -107,6 +100,7 @@ interface AudioTrackProps {
 }
 
 export function AudioTrack({
+  readReceiverStats,
   onPlaybackBlocked,
   outputDeviceId,
   participantId,
@@ -141,6 +135,7 @@ export function AudioTrack({
 
     let cancelled = false;
     let source: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
     let gain: GainNode | null = null;
     let destination: MediaStreamAudioDestinationNode | null = null;
     let context: AudioContext | null = null;
@@ -164,6 +159,7 @@ export function AudioTrack({
       output.pause();
       output.srcObject = null;
       source?.disconnect();
+      analyser?.disconnect();
       gain?.disconnect();
       destination?.stream.getTracks().forEach((track) => track.stop());
       gainRef.current = null;
@@ -184,11 +180,13 @@ export function AudioTrack({
         throw new Error("The remote audio track is unavailable.");
       }
 
-      context = getAudioContext();
+      context = getMeetingAudioContext();
       gain = context.createGain();
       destination = context.createMediaStreamDestination();
       source = context.createMediaStreamSource(new MediaStream([nativeTrack]));
-      source.connect(gain);
+      analyser = context.createAnalyser();
+      source.connect(analyser);
+      analyser.connect(gain);
       gain.connect(destination);
       gain.gain.value = volumeRef.current;
       gainRef.current = gain;
@@ -279,6 +277,14 @@ export function AudioTrack({
 
     void start();
     const retry = () => { void start(); };
+    const repair = (event: Event) => {
+      if ((event as CustomEvent<{ participantId: string }>).detail?.participantId !== participantId || starting) return;
+      recordAudioDiagnostic(participantId, { action: "manual-direct-playback" });
+      outputModeRef.current = "element";
+      if (attached) track.detach(element);
+      attached = false;
+      void start();
+    };
     const resumeVisible = () => {
       if (document.visibilityState === "visible") {
         retry();
@@ -289,8 +295,82 @@ export function AudioTrack({
         retry();
       }
     };
+    let sourceTime = element.currentTime;
+    let stalledAt = performance.now();
+    let lastRepair = -Infinity;
+    let readingStats = false;
+    let previousEnergy = 0;
+    let silentGraphSamples = 0;
+    const graphSamples = new Float32Array(256);
+    const watchdog = window.setInterval(() => {
+      if (nativeTrack && readReceiverStats && !readingStats) {
+        readingStats = true;
+        void readReceiverStats(nativeTrack).then(report => {
+          if (cancelled) return;
+          report?.forEach(stat => {
+            if (stat.type !== "inbound-rtp" || (stat.kind ?? stat.mediaType) !== "audio") return;
+            analyser?.getFloatTimeDomainData(graphSamples);
+            const graphPeak = Math.max(...graphSamples.map(Math.abs));
+            const energy = typeof stat.totalAudioEnergy === "number" ? stat.totalAudioEnergy : 0;
+            const graphSilent = energy > previousEnergy + 0.00001 && graphPeak < 0.000001 &&
+              outputModeRef.current === "webaudio" && context?.state === "running" &&
+              !nativeTrack.muted && !track.isMuted() && !element.paused;
+            silentGraphSamples = graphSilent ? silentGraphSamples + 1 : 0;
+            previousEnergy = energy;
+            recordAudioDiagnostic(participantId, {
+              packetsReceived: stat.packetsReceived, packetsLost: stat.packetsLost,
+              bytesReceived: stat.bytesReceived, totalAudioEnergy: stat.totalAudioEnergy,
+              concealedSamples: stat.concealedSamples, jitter: stat.jitter,
+              graphPeak, sourcePaused: element.paused, outputPaused: output.paused,
+              context: context?.state, nativeMuted: nativeTrack.muted,
+              trackState: nativeTrack.readyState, signalledMuted: track.isMuted(),
+              volume: volumeRef.current, mode: outputModeRef.current,
+            });
+            // Received/decoded speech with a silent processing graph is a
+            // local playback fault. Direct playback leaves the RTP path intact.
+            if (silentGraphSamples >= 4 && !starting) {
+              silentGraphSamples = 0;
+              void fallback().catch(() => { onPlaybackBlockedRef.current?.(true); });
+            }
+          });
+        }).catch(() => undefined).finally(() => { readingStats = false; });
+      }
+      recordAudioDiagnostic(participantId, {
+        sourcePaused: element.paused, outputPaused: output.paused,
+        context: context?.state, nativeMuted: nativeTrack?.muted,
+        trackState: nativeTrack?.readyState, signalledMuted: track.isMuted?.(),
+        volume: volumeRef.current, mode: outputModeRef.current,
+      });
+      if (cancelled || track.isMuted?.() || nativeTrack?.readyState === "ended" ||
+          nativeTrack?.muted || volumeRef.current === 0) {
+        stalledAt = performance.now();
+        return;
+      }
+      const now = performance.now();
+      if (element.currentTime !== sourceTime) {
+        sourceTime = element.currentTime;
+        stalledAt = now;
+      }
+      const broken = element.paused ||
+        (outputModeRef.current === "webaudio" && (output.paused || context?.state !== "running"));
+      if ((broken || now - stalledAt > 12_000) && now - lastRepair > 15_000) {
+        lastRepair = now;
+        element.dataset.audioRecovery = String(Number(element.dataset.audioRecovery ?? 0) + 1);
+        console.warn("Repairing remote audio playback", {
+          participantId, sourcePaused: element.paused, outputPaused: output.paused,
+          contextState: context?.state, trackState: nativeTrack?.readyState,
+          nativeMuted: nativeTrack?.muted, mode: outputModeRef.current,
+        });
+        if (now - stalledAt > 12_000 && !starting) {
+          track.detach(element);
+          attached = false;
+        }
+        retry();
+      }
+    }, 2000);
     document.addEventListener("pointerdown", retry);
     document.addEventListener("ninjitsi:retry-audio", retry);
+    document.addEventListener("ninjitsi:repair-audio", repair);
     document.addEventListener("keydown", retry);
     document.addEventListener("visibilitychange", resumeVisible);
     nativeTrack?.addEventListener("unmute", retry);
@@ -298,14 +378,17 @@ export function AudioTrack({
 
     return () => {
       cancelled = true;
+      window.clearInterval(watchdog);
       document.removeEventListener("pointerdown", retry);
       document.removeEventListener("ninjitsi:retry-audio", retry);
+      document.removeEventListener("ninjitsi:repair-audio", repair);
       document.removeEventListener("keydown", retry);
       document.removeEventListener("visibilitychange", resumeVisible);
       nativeTrack?.removeEventListener("unmute", retry);
       context?.removeEventListener("statechange", resumeContext);
       gainRef.current = null;
       source?.disconnect();
+      analyser?.disconnect();
       gain?.disconnect();
       destination?.stream.getTracks().forEach((track) => track.stop());
       output.pause();
@@ -316,7 +399,7 @@ export function AudioTrack({
       }
       onPlaybackBlockedRef.current?.(false);
     };
-  }, [track, nativeTrack]);
+  }, [track, nativeTrack, participantId, readReceiverStats]);
 
   useEffect(() => {
     if (appliedOutputDeviceIdRef.current === outputDeviceId) {
@@ -343,10 +426,10 @@ export function AudioTrack({
     const nextVolume = Math.min(2, Math.max(0, volume));
 
     volumeRef.current = nextVolume;
-    if (gainRef.current && sharedAudioContext) {
+    if (gainRef.current) {
       gainRef.current.gain.setTargetAtTime(
         nextVolume,
-        sharedAudioContext.currentTime,
+        getMeetingAudioContext().currentTime,
         0.015,
       );
     } else if (element) {

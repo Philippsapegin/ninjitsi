@@ -23,6 +23,10 @@ interface CallControlsProps {
   onToggleAudio: () => void;
   onToggleScreenShare: () => void;
   onToggleVideo: () => void;
+  pushToTalkEnabled: boolean;
+  pushToTalkPressed: boolean;
+  onPushToTalkPress: () => void;
+  onPushToTalkRelease: () => void;
 }
 
 interface ControlButtonProps {
@@ -33,6 +37,8 @@ interface ControlButtonProps {
   label: string;
   onClick: () => void;
   toggledOff?: boolean;
+  onPress?: () => void;
+  onRelease?: () => void;
   children: React.ReactNode;
 }
 
@@ -45,6 +51,8 @@ function ControlButton({
   label,
   onClick,
   toggledOff = false,
+  onPress,
+  onRelease,
 }: ControlButtonProps) {
   return (
     <button
@@ -55,16 +63,30 @@ function ControlButton({
         audioLevel !== undefined ? styles.audioReactive : ""
       }`}
       onClick={onClick}
+      onPointerDown={onPress ? (event) => {
+        if (event.button !== 0) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onPress();
+      } : undefined}
+      onPointerUp={onRelease}
+      onPointerCancel={onRelease}
+      onLostPointerCapture={onRelease}
+      onBlur={onRelease}
+      onKeyDown={onPress ? event => {
+        if ((event.code === "Space" || event.code === "Enter") && !event.repeat) {
+          event.preventDefault(); onPress();
+        }
+      } : undefined}
+      onKeyUp={onRelease ? event => {
+        if (event.code === "Space" || event.code === "Enter") { event.preventDefault(); onRelease(); }
+      } : undefined}
+      style={{
+        ...(onPress ? { touchAction: "none" } : {}),
+        ...(audioLevel !== undefined ? { "--audio-level": Math.max(0, Math.min(1, audioLevel)) } : {}),
+      } as CSSProperties}
       disabled={disabled}
       title={label}
       type="button"
-      style={
-        audioLevel === undefined
-          ? undefined
-          : ({
-              "--audio-level": Math.max(0, Math.min(1, audioLevel)),
-            } as CSSProperties)
-      }
     >
       {children}
       <span>{label}</span>
@@ -84,6 +106,10 @@ export function CallControls({
   onToggleAudio,
   onToggleScreenShare,
   onToggleVideo,
+  pushToTalkEnabled,
+  pushToTalkPressed,
+  onPushToTalkPress,
+  onPushToTalkRelease,
 }: CallControlsProps) {
   const { tr } = useI18n();
 
@@ -92,15 +118,18 @@ export function CallControls({
       <div className={styles.dock}>
         <ControlButton
           audioLevel={isAudioMuted ? 0 : localAudioLevel}
-          disabled={isAudioBusy}
+          disabled={isAudioBusy && !pushToTalkEnabled}
+          active={pushToTalkEnabled && pushToTalkPressed}
+          onPress={pushToTalkEnabled ? onPushToTalkPress : undefined}
+          onRelease={pushToTalkEnabled ? onPushToTalkRelease : undefined}
           label={
-            isAudioBusy
+            pushToTalkEnabled ? tr("Hold to talk", "Удерживать для разговора") : isAudioBusy
               ? tr("Connecting microphone", "Подключаем микрофон")
               : isAudioMuted
                 ? tr("Turn microphone on", "Включить микрофон")
                 : tr("Turn microphone off", "Выключить микрофон")
           }
-          onClick={onToggleAudio}
+          onClick={pushToTalkEnabled ? () => undefined : onToggleAudio}
           toggledOff={isAudioMuted}
         >
           {isAudioBusy ? (

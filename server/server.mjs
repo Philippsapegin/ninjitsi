@@ -14,6 +14,7 @@ import {
 } from "node:crypto";
 import { extname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { createBotApi } from "./bot-api.mjs";
 import {
   CapacityError,
   ConcurrencyGate,
@@ -171,6 +172,11 @@ const scrypt = promisify(scryptCallback);
 let rooms = new Map();
 let writeQueue = Promise.resolve();
 let shuttingDown = false;
+const botApi = createBotApi({
+  configuration: process.env.NINJITSI_BOTS ?? "[]",
+  signingSecret: jitsiJwtSecret ? `ninjitsi.bot-session.v1:${jitsiJwtSecret}` : undefined,
+  getRoom: code => rooms.get(code), readJsonBody, json,
+});
 
 if (!["open", "token"].includes(jitsiAuthMode)) {
   throw new Error('JITSI_AUTH_MODE must be either "open" or "token"');
@@ -711,6 +717,7 @@ async function handleApi(request, response, pathname) {
 
     json(response, 200, {
       admitted: true,
+      eventsToken: botApi.issueAdmission(room, body.displayName?.trim() ?? ""),
       jitsiToken: issueJitsiToken(room, body.displayName?.trim() ?? ""),
       room: publicRoom(room),
     });
@@ -934,6 +941,8 @@ const server = createServer(async (request, response) => {
     }
 
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+    if (await botApi.handle(request, response, url)) return;
 
     if (await handleApi(request, response, url.pathname)) {
       return;

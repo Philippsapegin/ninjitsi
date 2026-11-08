@@ -725,9 +725,15 @@ Profiles and avatars remain in that browser's local storage; optional camera-off
 
 ## Features
 
+External chat bots have a versioned, room-scoped HTTP API for public commands
+and replies. Bots and dice engines are not bundled. See [Bot API v1](docs/BOT_API.md)
+for configuration, authentication, polling, retries and retention limits.
+
 - **Local profiles:** reusable names, avatars, tile colors, and optional 16:9 camera-off backgrounds stored in the client's browser. Backgrounds accept JPG, PNG, or GIF files up to 3 MB.
 - **Adaptive grid and stage mode:** every video tile remains 16:9; selecting a tile promotes it to a stage. On narrow screens, chat moves below the video and the grid uses one column for two people or at most two columns for larger calls.
 - **Noise suppression:** optional browser-native microphone processing. Switching modes briefly reacquires the microphone; if the browser cannot apply the new mode, Ninjitsi restores the previous capture when possible.
+- **Push-to-talk:** enable it in Settings, then hold Space outside text fields or hold the microphone button. Key release, focus loss and hidden tabs close the microphone; the preference survives reloads. Turning PTT off keeps the microphone muted until explicitly enabled. This is a page shortcut, not a system-wide hotkey.
+- **Session and audio recovery:** a rejoining tab supersedes its earlier tile through a session marker, without kicking Jitsi endpoints or merging matching names. This requires updated clients; the server still controls stale XMPP session expiry. Remote audio retries stopped playback and can bypass a silent processing graph when receiver statistics confirm decoded audio. The participant volume menu also offers **Restore audio** without a rejoin; direct playback supports up to 100% volume. Settings can export a bounded audio diagnostic log with no recordings, SDP or network addresses. A zero energy counter alone does not prove the sender is silent.
 - **Device controls and feed diagnostics:** choose microphone, camera, and audio output; an optional panel shows local microphone activity and a video preview. Audio-output selection depends on browser support and may require a browser permission prompt.
 - **Private messages and replies:** text and attachments can target selected participants; private replies retain their recipient set.
 - **Personal volume:** every remote participant can be adjusted locally from 0% to 200%; local microphone audio is never attached to local output.
@@ -777,6 +783,7 @@ With Ninjitsi running:
 ```bash
 npm run smoke:rooms
 npm run smoke:profiles
+npm run smoke:interactions
 npm run smoke:visual
 npm run smoke:audio
 ```

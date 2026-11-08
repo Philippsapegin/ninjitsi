@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
 import { chromium, firefox } from "playwright-core";
 
@@ -21,10 +22,12 @@ const bundle = await build({
     import { createRoot } from 'react-dom/client';
     import { AudioTrack, VideoTrack } from './components/meeting/MediaTrack.tsx';
     import { createBrowserMicrophoneTrack } from './lib/jitsi/noiseSuppression.ts';
+    import { playNinjitsiSound } from './lib/sounds.ts';
     const NativeAudioContext = window.AudioContext;
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     let pc, sender, source, nativeTrack, track, root, gainVolume = 1;
     let attachCount = 0, detachCount = 0;
+    const readReceiverStats = () => pc.getStats();
     const gather = async () => {
       if (pc.iceGatheringState === 'complete') return;
       await new Promise((resolve, reject) => {
@@ -85,7 +88,7 @@ const bundle = await build({
         stop:() => {destination.stream.getTracks().forEach(t=>t.stop());void context.close();}};
     };
     const render = () => root.render(React.createElement(React.Fragment, null,
-      React.createElement(AudioTrack, {outputDeviceId:'',participantId:'remote',track,volume:gainVolume}),
+      React.createElement(AudioTrack, {outputDeviceId:'',participantId:'remote',track,volume:gainVolume,readReceiverStats}),
       React.createElement(VideoTrack, {isLocal:false,track:{...track,attach:async el => {
         // A video tile may be handed a bundled audio/video stream by Jitsi.
         el.srcObject=new MediaStream([nativeTrack]);
@@ -112,6 +115,15 @@ const bundle = await build({
           };
         }
         if(failure === 'context') window.AudioContext=function(){throw new Error('Simulated Web Audio failure');};
+        if(failure === 'silent-graph') window.AudioContext=function(){
+          const context=new NativeAudioContext(), create=context.createMediaStreamSource.bind(context);
+          context.createMediaStreamSource=stream=>{
+            const source=create(stream),connect=source.connect.bind(source),silent=context.createGain();
+            silent.gain.value=0;silent.connect(context.destination);
+            source.connect=()=>{connect(silent);return silent;};return source;
+          };
+          return context;
+        };
         if(failure === 'processed-play') {
           const play=HTMLMediaElement.prototype.play;
           HTMLMediaElement.prototype.play=function(){
@@ -153,13 +165,19 @@ const bundle = await build({
           videoMuted:document.querySelector('video').muted,attachCount,detachCount};
       },
       async stats() {return [...(await pc.getStats()).values()].filter(s => s.type==='inbound-rtp' && s.kind==='audio')
-        .map(s=>({packetsReceived:s.packetsReceived,packetsLost:s.packetsLost}));},
+        .map(s=>({packetsReceived:s.packetsReceived,packetsLost:s.packetsLost,totalAudioEnergy:s.totalAudioEnergy,audioLevel:s.audioLevel}));},
       async remount() { root.unmount(); await sleep(50);root=createRoot(document.body.appendChild(document.createElement('div')));render();await sleep(300); },
+      async pausePlayback() { document.querySelector('[data-audio-output="remote"]').pause(); },
+      async alert() { playNinjitsiSound('disconnect'); },
       async close() { root?.unmount();pc?.close();source?.stop();await sleep(50);return {attachCount,detachCount}; },
     };
   ` },
 });
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
+  if (request.url === '/Sounds/Nin.Disconnect.wav') {
+    response.setHeader('Content-Type','audio/wav');
+    response.end(await readFile(new URL('../public/Sounds/Nin.Disconnect.wav', import.meta.url))); return;
+  }
   response.setHeader("Content-Type", request.url === "/test.js" ? "text/javascript" : "text/html");
   response.end(request.url === "/test.js" ? bundle.outputFiles[0].text
     : '<!doctype html><html><body><script src="/test.js"></script></body></html>');
@@ -184,7 +202,9 @@ try {
     ["Chrome", "Chrome"], ["Chrome", "Firefox"], ["Firefox", "Chrome"], ["Firefox", "Firefox"],
     ["Chrome", "Chrome", "context"], ["Chrome", "Chrome", "processed-play"],
     ["Chrome", "Chrome", "autoplay"],
+    ["Chrome", "Chrome", "silent-graph"],
   ]) {
+    if (process.env.NINJITSI_AUDIO_CASE && process.env.NINJITSI_AUDIO_CASE !== (failure ?? 'normal')) continue;
     const send = await browsers[sendName].newPage();
     const receive = await browsers[receiveName].newPage();
     try {
@@ -201,11 +221,26 @@ try {
       }
       await receive.waitForFunction(() => document.querySelector('[data-audio-source]')?.dataset.audioPlayback === "playing", null, { timeout: 15000 });
       const sample = () => receive.evaluate(() => window.__remoteAudio.sample());
+      if (failure === "silent-graph") {
+        assert((await sample()).rms < 0.001, "Failure injection must actually silence the processing graph");
+        // Chromium may report zero decoded energy for a broken graph despite
+        // incoming RTP. In that case silence alone cannot prove a fault:
+        // exercise the explicit per-participant repair without reconnecting.
+        await receive.evaluate(() => document.dispatchEvent(new CustomEvent('ninjitsi:repair-audio', {detail:{participantId:'remote'}})));
+        await receive.waitForFunction(() => document.querySelector('[data-audio-source]')?.dataset.audioGain === 'element');
+      }
       const initial = await sample();
       assert(initial.rms > 0.015, `${sendName} -> ${receiveName}: silent remote RTP ${JSON.stringify(initial)}`);
       assert.equal(initial.paused, false); assert.equal(initial.muted, false); assert.equal(initial.videoMuted, true);
       if (!failure || failure === "autoplay") {
         assert.equal(initial.sourceMuted, true, "The raw primer must not play a second copy of the voice");
+        await receive.evaluate(() => window.__remoteAudio.pausePlayback());
+        await receive.waitForFunction(() => !document.querySelector('[data-audio-output="remote"]').paused, null, {timeout:18000});
+        assert((await sample()).rms > 0.015, "Watchdog did not restore paused playback");
+        const players = await receive.locator('audio').count();
+        await receive.evaluate(() => window.__remoteAudio.alert());
+        assert((await sample()).rms > initial.rms * 0.8, "Disconnect alert attenuated remote RTP");
+        assert.equal(await receive.locator('audio').count(), players, "Alert opened another media player");
         await receive.evaluate(() => window.__remoteAudio.volume(2));
         const doubled = await sample(); assert(doubled.rms > initial.rms * 1.8, "200% did not amplify actual remote RTP");
         await receive.evaluate(() => window.__remoteAudio.volume(0));

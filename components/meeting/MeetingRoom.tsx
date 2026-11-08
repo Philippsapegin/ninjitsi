@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { Brand } from "@/components/brand/Brand";
 import { useCallTimer } from "@/hooks/useCallTimer";
+import { usePushToTalk } from "@/hooks/usePushToTalk";
+import { useBotChat } from "@/hooks/useBotChat";
 import { getStoredLocale, localize, useI18n } from "@/lib/i18n";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
@@ -23,7 +25,7 @@ import {
 } from "@/lib/room";
 import { authorizeRoom, getRoom, RoomApiError } from "@/lib/roomApi";
 import { useRoomApiEnabled } from "@/lib/runtimeConfig";
-import { playNinjitsiSound } from "@/lib/sounds";
+import { playNinjitsiSound, prepareNinjitsiSounds } from "@/lib/sounds";
 import { DEFAULT_PROFILE_TILE_COLOR } from "@/lib/profiles";
 import { AudioSinks } from "./AudioSinks";
 import { CallControls } from "./CallControls";
@@ -60,6 +62,9 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const router = useRouter();
   const { locale, tr } = useI18n();
   const conference = useJitsiConference(roomName);
+  const ptt = usePushToTalk(conference.setAudioMuted, conference.status === "joined");
+  const [eventsToken, setEventsToken] = useState<string | null>(null);
+  const botChat = useBotChat(roomName, eventsToken, conference.status === "joined", conference.chatMessages);
   const roomApiEnabled = useRoomApiEnabled();
   const [joinDetails, setJoinDetails] =
     useState<JoinOptions>(EMPTY_JOIN_DETAILS);
@@ -86,6 +91,15 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     conference.status === "joined" ||
     conference.status === "reconnecting";
   const timer = useCallTimer(callIsActive);
+  useEffect(() => {
+    const unlock = () => prepareNinjitsiSounds(conference.audioOutputId);
+    document.addEventListener("pointerdown", unlock);
+    document.addEventListener("keydown", unlock);
+    return () => {
+      document.removeEventListener("pointerdown", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+  }, [conference.audioOutputId]);
   const showJoinOverlay =
     conference.status === "idle" ||
     conference.status === "loading" ||
@@ -289,6 +303,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   }, [conference.participants.length, locale]);
 
   async function join(details: JoinOptions) {
+    prepareNinjitsiSounds(conference.audioOutputId);
     setJoinDetails(details);
 
     if (!roomApiEnabled) {
@@ -307,6 +322,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         );
 
         setProtectedRoom(admission.room.passwordRequired);
+        setEventsToken(admission.eventsToken ?? null);
         await conference.join({
           ...details,
           jitsiToken: admission.jitsiToken,
@@ -440,6 +456,8 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             onAudioInputChange={conference.setAudioInputDevice}
             onAudioOutputChange={conference.setAudioOutputDevice}
             onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
+            pushToTalkEnabled={ptt.enabled}
+            onPushToTalkChange={ptt.change}
             onVideoBackgroundChange={
               conference.setVideoBackgroundEnabled
             }
@@ -485,7 +503,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         <ChatSidebar
           disabled={conference.status !== "joined"}
           isSendingAttachment={conference.isSendingAttachment}
-          messages={conference.chatMessages}
+          messages={[...conference.chatMessages, ...botChat.botMessages].sort((a, b) => a.timestamp - b.timestamp)}
           onSend={conference.sendChatMessage}
           onSendAttachment={conference.sendChatAttachment}
           participants={conference.participants}
@@ -493,6 +511,10 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       </div>
 
       <CallControls
+        pushToTalkEnabled={ptt.enabled}
+        pushToTalkPressed={ptt.pressed}
+        onPushToTalkPress={ptt.press}
+        onPushToTalkRelease={ptt.release}
         isAudioBusy={conference.isAudioBusy}
         isAudioMuted={conference.isAudioMuted}
         isScreenShareBusy={conference.isScreenShareBusy}
@@ -507,6 +529,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
       />
 
       <AudioSinks
+        readReceiverStats={conference.readAudioReceiverStats}
         outputDeviceId={conference.audioOutputId}
         participantVolumes={participantVolumes}
         participants={conference.participants}
@@ -524,6 +547,12 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
       {conference.error && conference.status === "joined" && (
         <div className={styles.toast}>{conference.error}</div>
+      )}
+      {botChat.unavailable && !conference.error && conference.status === "joined" && (
+        <div className={styles.toast}>{tr(
+          "Bot connection unavailable. The meeting chat is still working. Rejoin if this persists.",
+          "Нет связи с API ботов. Чат встречи работает. Если ошибка не исчезает, перезайдите.",
+        )}</div>
       )}
 
       {showJoinOverlay && joinDetailsReady && (

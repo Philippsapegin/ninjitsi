@@ -37,6 +37,9 @@ export interface JitsiParticipantLike {
 }
 
 export interface JitsiConferenceLike {
+  getActivePeerConnection?: () => {
+    findReceiverForTrack?: (track: MediaStreamTrack) => RTCRtpReceiver | undefined;
+  } | null;
   addTrack: (track: JitsiTrackLike) => Promise<void>;
   getLocalTracks: (mediaType?: MediaType) => JitsiTrackLike[];
   getParticipants: () => JitsiParticipantLike[];
@@ -131,6 +134,7 @@ export interface ParticipantView {
 }
 
 export interface ChatMessage {
+  isBot?: boolean;
   attachments?: ChatAttachment[];
   avatarUrl?: string;
   id: string;

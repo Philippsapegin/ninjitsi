@@ -460,6 +460,7 @@ export function ChatSidebar({
                       }
                     >
                       {message.senderName}
+                      {message.isBot && <small> · {tr("bot", "бот")}</small>}
                       {message.isPrivate && (
                         <LockKeyhole aria-hidden="true" size={9} />
                       )}

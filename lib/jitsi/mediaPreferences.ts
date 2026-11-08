@@ -7,6 +7,10 @@ export interface MediaPreferences {
 
 const MEDIA_PREFERENCES_KEY = "ninjitsi.mediaPreferences";
 
+export function readPushToTalkPreference() {
+  try { return localStorage.getItem("ninjitsi.pushToTalk") === "true"; } catch { return false; }
+}
+
 export const DEFAULT_MEDIA_PREFERENCES: MediaPreferences = {
   audioInputId: "",
   audioOutputId: "",

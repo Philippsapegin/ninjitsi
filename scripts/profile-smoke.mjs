@@ -23,23 +23,36 @@ const browser = await chromium.launch({ executablePath, headless: true, args: ["
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 
 await page.addInitScript(() => {
-  const originalPlay = HTMLMediaElement.prototype.play;
-
   localStorage.setItem("ninjitsi.locale", "ru");
   window.__NINJITSI_CONFIG__ = { jitsiUrl: "" };
   window.__ninjitsiPlayedSounds = [];
-  HTMLMediaElement.prototype.play = function play() {
-    const source = this.currentSrc || this.src;
-
+  const inputs = new WeakMap();
+  const decoded = new WeakMap();
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await originalFetch(...args);
+    const source = String(args[0]);
     if (source.includes("/Sounds/")) {
-      window.__ninjitsiPlayedSounds.push(
-        new URL(source, window.location.href).pathname,
-      );
-      queueMicrotask(() => this.dispatchEvent(new Event("ended")));
-      return Promise.resolve();
+      const arrayBuffer = response.arrayBuffer.bind(response);
+      response.arrayBuffer = async () => {
+        const bytes = await arrayBuffer();
+        inputs.set(bytes, new URL(source, location.href).pathname);
+        return bytes;
+      };
     }
-
-    return originalPlay.call(this);
+    return response;
+  };
+  const decode = AudioContext.prototype.decodeAudioData;
+  AudioContext.prototype.decodeAudioData = function (bytes) {
+    return decode.call(this, bytes).then(buffer => {
+      if (inputs.has(bytes)) decoded.set(buffer, inputs.get(bytes));
+      return buffer;
+    });
+  };
+  const start = AudioBufferSourceNode.prototype.start;
+  AudioBufferSourceNode.prototype.start = function (...args) {
+    if (decoded.has(this.buffer)) window.__ninjitsiPlayedSounds.push(decoded.get(this.buffer));
+    return start.apply(this, args);
   };
 });
 

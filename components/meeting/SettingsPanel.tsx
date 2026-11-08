@@ -17,6 +17,7 @@ import {
 import { useI18n } from "@/lib/i18n";
 import type { MeetingStatus, ParticipantView } from "@/lib/jitsi/types";
 import { FeedDiagnostics } from "./FeedDiagnostics";
+import { downloadAudioDiagnostics } from "@/lib/jitsi/audioDiagnostics";
 import styles from "./SettingsPanel.module.css";
 
 interface SettingsPanelProps {
@@ -30,6 +31,8 @@ interface SettingsPanelProps {
   onAudioInputChange: (deviceId: string) => Promise<void>;
   onAudioOutputChange: (deviceId: string) => Promise<void>;
   onNoiseSuppressionChange: (enabled: boolean) => Promise<void>;
+  pushToTalkEnabled: boolean;
+  onPushToTalkChange: (enabled: boolean) => void;
   onVideoInputChange: (deviceId: string) => Promise<void>;
   onVideoBackgroundChange: (enabled: boolean) => Promise<void>;
   roomPassword: string | null;
@@ -58,6 +61,8 @@ export function SettingsPanel({
   onAudioInputChange,
   onAudioOutputChange,
   onNoiseSuppressionChange,
+  pushToTalkEnabled,
+  onPushToTalkChange,
   onVideoInputChange,
   onVideoBackgroundChange,
   roomPassword,
@@ -317,6 +322,23 @@ export function SettingsPanel({
             </button>
           </div>
 
+          <div className={styles.toggleRow}>
+            <span className={styles.toggleIcon}><Mic size={15} /></span>
+            <div>
+              <strong>Push-to-talk</strong>
+              <small>{tr("Hold Space or the microphone button", "Удерживайте пробел или кнопку микрофона")}</small>
+            </div>
+            <button
+              aria-checked={pushToTalkEnabled}
+              aria-label="Push-to-talk"
+              className={pushToTalkEnabled ? styles.toggleOn : ""}
+              disabled={busy}
+              onClick={() => onPushToTalkChange(!pushToTalkEnabled)}
+              role="switch"
+              type="button"
+            ><i>{pushToTalkEnabled && <Check size={11} />}</i></button>
+          </div>
+
           {videoBackgroundAvailable && (
             <div className={styles.toggleRow}>
               <span className={styles.toggleIcon}>
@@ -420,6 +442,9 @@ export function SettingsPanel({
             localParticipant={localParticipant}
             status={status}
           />
+          <button className={styles.outputPicker} onClick={downloadAudioDiagnostics} type="button">
+            {tr("Save audio diagnostics", "Сохранить диагностику звука")}
+          </button>
         </section>
       )}
 

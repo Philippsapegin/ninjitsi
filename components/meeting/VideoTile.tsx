@@ -210,6 +210,14 @@ export function VideoTile({
             <button onClick={() => onVolumeChange(1)} type="button">
               {tr("Reset to 100%", "Сбросить на 100%")}
             </button>
+            <button onClick={() => document.dispatchEvent(new CustomEvent("ninjitsi:repair-audio", {
+              detail: { participantId: participant.id },
+            }))} type="button" title={tr(
+              "Restart this participant's playback. Direct playback supports up to 100% volume.",
+              "Перезапустить звук этого участника. В прямом режиме громкость ограничена 100%.",
+            )}>
+              {tr("Restore audio", "Восстановить звук")}
+            </button>
           </section>
         )}
       </div>

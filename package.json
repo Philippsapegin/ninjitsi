@@ -21,6 +21,7 @@
     "smoke:jitsi": "node scripts/jitsi-smoke.mjs",
     "smoke:video:jitsi": "node scripts/jitsi-video-smoke.mjs",
     "smoke:profiles": "node scripts/profile-smoke.mjs",
+    "smoke:interactions": "node scripts/interaction-regression.mjs",
     "smoke:audio": "node scripts/audio-regression.mjs",
     "smoke:audio:remote": "node scripts/remote-audio-regression.mjs",
     "smoke:audio:jitsi": "node scripts/jitsi-audio-smoke.mjs",

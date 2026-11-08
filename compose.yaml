@@ -53,6 +53,7 @@ services:
       SCRYPT_MAX_CONCURRENCY: ${SCRYPT_MAX_CONCURRENCY:-2}
       SCRYPT_MAX_QUEUE: ${SCRYPT_MAX_QUEUE:-8}
       TRUST_PROXY: ${TRUST_PROXY:-1}
+      NINJITSI_BOTS: ${NINJITSI_BOTS:-[]}
     ports:
       - "${NINJITSI_PORT:-127.0.0.1:3000}:8080"
     init: true
