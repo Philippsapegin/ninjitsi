@@ -19,6 +19,7 @@ interface RoomAdmissionResponse extends RoomResponse {
   admitted: true;
   jitsiToken: string | null;
   eventsToken?: string | null;
+  widgetToken?: string | null;
 }
 
 export class RoomApiError extends Error {

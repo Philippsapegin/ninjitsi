@@ -33,8 +33,11 @@ export function createBotApi({ configuration = "[]", signingSecret, getRoom, rea
   function enabled(room) { return bots.some(bot => bot.rooms.includes(room)); }
   function issueAdmission(room, name) {
     if (!enabled(room.code)) return null;
+    return issueCapability(room,name,'chat');
+  }
+  function issueCapability(room,name,purpose) {
     const payload = Buffer.from(JSON.stringify({ room: room.code, name: name.slice(0, 80),
-      id: randomBytes(16).toString("hex"), exp: Math.min(Date.parse(room.expiresAt), now() + 12 * 60 * 60_000) })).toString("base64url");
+      id: randomBytes(16).toString("hex"), purpose, exp: Math.min(Date.parse(room.expiresAt), now() + 12 * 60 * 60_000) })).toString("base64url");
     return `${payload}.${createHmac("sha256", secret).update(payload).digest("base64url")}`;
   }
   function authenticate(token, room) {
@@ -94,7 +97,7 @@ export function createBotApi({ configuration = "[]", signingSecret, getRoom, rea
     const record = getRoom(code);
     const token = request.headers.authorization?.match(/^Bearer (\S{1,2048})$/)?.[1] ?? "";
     const actor = authenticate(token, code);
-    if (!actor) { json(response, 401, { error: "Invalid or expired room/bot token" }); return true; }
+    if (!actor || actor.purpose === 'widgets') { json(response, 401, { error: "Invalid or expired room/bot token" }); return true; }
     if (!record || Date.parse(record.expiresAt) <= now()) { json(response, 404, { error: "Room not found" }); return true; }
     if (!enabled(code)) { json(response, 403, { error: "Bot API disabled for this room" }); return true; }
     if (!limiter.check(actor.id).allowed) {
@@ -134,5 +137,8 @@ export function createBotApi({ configuration = "[]", signingSecret, getRoom, rea
     json(response, 201, { event: append(code, actor, body) });
     return true;
   }
-  return { handle, issueAdmission };
+  return { handle, issueAdmission,
+    issueWidgetAdmission:(room,name)=>issueCapability(room,name,'widgets'),
+    verifyWidgetAdmission:(token,room)=>{const actor=authenticate(token,room);return actor?.purpose==='widgets'&&!actor.bot?actor:null;},
+  };
 }

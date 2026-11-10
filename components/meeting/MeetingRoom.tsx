@@ -16,6 +16,7 @@ import { Brand } from "@/components/brand/Brand";
 import { useCallTimer } from "@/hooks/useCallTimer";
 import { usePushToTalk } from "@/hooks/usePushToTalk";
 import { useBotChat } from "@/hooks/useBotChat";
+import { useRoomWidgets } from "@/hooks/useRoomWidgets";
 import { getStoredLocale, localize, useI18n } from "@/lib/i18n";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
@@ -28,6 +29,7 @@ import { useRoomApiEnabled } from "@/lib/runtimeConfig";
 import { playNinjitsiSound, prepareNinjitsiSounds } from "@/lib/sounds";
 import { DEFAULT_PROFILE_TILE_COLOR } from "@/lib/profiles";
 import { AudioSinks } from "./AudioSinks";
+import { RoomWidgets } from "./RoomWidgets";
 import { CallControls } from "./CallControls";
 import { ChatSidebar } from "./ChatSidebar";
 import { ConnectionSummary } from "./ConnectionSummary";
@@ -64,6 +66,8 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const conference = useJitsiConference(roomName);
   const ptt = usePushToTalk(conference.setAudioMuted, conference.status === "joined");
   const [eventsToken, setEventsToken] = useState<string | null>(null);
+  const [widgetToken,setWidgetToken]=useState<string|null>(null);
+  const roomWidgets=useRoomWidgets(roomName,widgetToken,conference.status==='joined',conference.chatMessages);
   const botChat = useBotChat(roomName, eventsToken, conference.status === "joined", conference.chatMessages);
   const roomApiEnabled = useRoomApiEnabled();
   const [joinDetails, setJoinDetails] =
@@ -323,6 +327,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
 
         setProtectedRoom(admission.room.passwordRequired);
         setEventsToken(admission.eventsToken ?? null);
+        setWidgetToken(admission.widgetToken??null);
         await conference.join({
           ...details,
           jitsiToken: admission.jitsiToken,
@@ -503,7 +508,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         <ChatSidebar
           disabled={conference.status !== "joined"}
           isSendingAttachment={conference.isSendingAttachment}
-          messages={[...conference.chatMessages, ...botChat.botMessages].sort((a, b) => a.timestamp - b.timestamp)}
+          messages={[...conference.chatMessages, ...botChat.botMessages,...roomWidgets.messages].sort((a, b) => a.timestamp - b.timestamp)}
           onSend={conference.sendChatMessage}
           onSendAttachment={conference.sendChatAttachment}
           participants={conference.participants}
@@ -566,6 +571,8 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           status={isAdmissionBusy ? "loading" : conference.status}
         />
       )}
+      <RoomWidgets room={roomName} widgets={roomWidgets.widgets} call={roomWidgets.call}/>
+      {roomWidgets.error&&!conference.error&&conference.status==='joined'&&<div className={styles.toast}>{roomWidgets.error}</div>}
     </main>
   );
 }

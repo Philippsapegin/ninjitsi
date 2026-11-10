@@ -15,6 +15,7 @@ import {
 import { extname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { createBotApi } from "./bot-api.mjs";
+import { createWidgetApi } from "./widget-api.mjs";
 import {
   CapacityError,
   ConcurrencyGate,
@@ -177,6 +178,11 @@ const botApi = createBotApi({
   signingSecret: jitsiJwtSecret ? `ninjitsi.bot-session.v1:${jitsiJwtSecret}` : undefined,
   getRoom: code => rooms.get(code), readJsonBody, json,
 });
+const widgetApi = createWidgetApi({
+  configuration:process.env.NINJITSI_WIDGETS??'[]',
+  verifyAdmission:botApi.verifyWidgetAdmission,
+  getRoom:code=>rooms.get(code),readJsonBody,json,
+});
 
 if (!["open", "token"].includes(jitsiAuthMode)) {
   throw new Error('JITSI_AUTH_MODE must be either "open" or "token"');
@@ -233,6 +239,7 @@ function applySecurityHeaders(response) {
       "font-src 'self' data:",
       "form-action 'self'",
       "frame-ancestors 'none'",
+      `frame-src ${widgetApi.frameOrigins.join(' ') || "'none'"}`,
       "img-src 'self' data: blob:",
       "media-src 'self' data: blob:",
       "object-src 'none'",
@@ -718,6 +725,7 @@ async function handleApi(request, response, pathname) {
     json(response, 200, {
       admitted: true,
       eventsToken: botApi.issueAdmission(room, body.displayName?.trim() ?? ""),
+      widgetToken: widgetApi.enabled ? botApi.issueWidgetAdmission(room,body.displayName?.trim()??'') : null,
       jitsiToken: issueJitsiToken(room, body.displayName?.trim() ?? ""),
       room: publicRoom(room),
     });
@@ -943,6 +951,7 @@ const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
     if (await botApi.handle(request, response, url)) return;
+    if (await widgetApi.handle(request, response, url)) return;
 
     if (await handleApi(request, response, url.pathname)) {
       return;
