@@ -571,7 +571,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
           status={isAdmissionBusy ? "loading" : conference.status}
         />
       )}
-      <RoomWidgets room={roomName} widgets={roomWidgets.widgets} call={roomWidgets.call}/>
+      <RoomWidgets room={roomName} widgets={roomWidgets.widgets} call={roomWidgets.call} avatarDataUrl={joinDetails.avatarDataUrl}/>
       {roomWidgets.error&&!conference.error&&conference.status==='joined'&&<div className={styles.toast}>{roomWidgets.error}</div>}
     </main>
   );

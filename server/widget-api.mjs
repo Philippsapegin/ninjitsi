@@ -20,7 +20,7 @@ export function createWidgetApi({ configuration = '[]', verifyAdmission, getRoom
     ids.add(value.id);[...value.commands,...Object.keys(commandActions)].forEach(command => commands.add(command));
     return { ...value,commandActions, url:url.href, serviceUrl:serviceUrl.href.replace(/\/$/, '') };
   });
-  const limiter = new SlidingWindowRateLimiter({ limit:180, windowMs:60_000 });
+  const limiter = new SlidingWindowRateLimiter({ limit:1200, windowMs:60_000 });
   const mutations = new SlidingWindowRateLimiter({ limit:20, windowMs:60_000 });
   async function call(widget, room, action, body, after) {
     const url = `${widget.serviceUrl}/v1/rooms/${room}/${action}${after === undefined ? '' : `?after=${after}`}`;
@@ -58,7 +58,7 @@ export function createWidgetApi({ configuration = '[]', verifyAdmission, getRoom
           if(fetched.status!==200)throw new Error('Widget unavailable');
           const data=fetched.result;
           return {...publicWidget,active:data.active===true,version:data.version,activation:data.activation,
-            state:data.state??null,serverNow:data.serverNow,messages:Array.isArray(data.messages)?data.messages.slice(-30):[]};
+            state:data.state??null,serverNow:data.serverNow,pollAfterMs:Number.isFinite(data.pollAfterMs)?Math.max(100,Math.min(1000,data.pollAfterMs)):1000,messages:Array.isArray(data.messages)?data.messages.slice(-30):[]};
         }catch{return {...publicWidget,unavailable:true};}
       }));
       json(response,200,{widgets:result});return true;
@@ -74,7 +74,9 @@ export function createWidgetApi({ configuration = '[]', verifyAdmission, getRoom
     if(action==='actions'&&(typeof body.action!=='string'||!/^[-\w]{1,40}$/.test(body.action)||
         !body.payload||typeof body.payload!=='object'||Array.isArray(body.payload))){json(response,400,{error:'Invalid widget action'});return true;}
     // The client cannot supply its own actor, upstream URL, or service key.
-    const payload={...(action==='actions'?body.payload:{}),requestId:body.requestId,actor:{id:actor.id,name:actor.name||'Participant'}};
+    const image=body.presentation?.avatarUrl;
+    const avatar=typeof image==='string'&&image.length<=12000&&/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(image)?image:'';
+    const payload={...(action==='actions'?body.payload:{}),requestId:body.requestId,actor:{id:actor.id,name:actor.name||'Participant',avatarUrl:avatar}};
     try{
       const fetched=await call(widget,code,action==='activate'?'activate':`actions/${body.action}`,payload);
       if(fetched.status>=400){json(response,[400,409,429].includes(fetched.status)?fetched.status:502,{error:typeof fetched.result.error==='string'?fetched.result.error.slice(0,180):'Widget unavailable'});return true;}

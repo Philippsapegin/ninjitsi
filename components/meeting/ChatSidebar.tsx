@@ -344,6 +344,7 @@ export function ChatSidebar({
   return (
     <>
       <aside
+        data-room-chat="true" data-open={open}
         className={`${styles.root} ${open ? styles.open : styles.closed} ${
           dragActive ? styles.dragActive : ""
         }`}

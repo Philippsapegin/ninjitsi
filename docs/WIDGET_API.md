@@ -54,7 +54,9 @@ and retained completed messages even in unchanged replies. Increase `version`
 when state changes. Change `activation` after a fresh command so a locally closed
 window can reopen; retries with the same `requestId` must be idempotent.
 
-Ninjitsi polls once per second. Responses are limited to 512 KB, requests have a
+Ninjitsi polls once per second by default. A provider may return `pollAfterMs`
+(100–1000 milliseconds) to stream an active animation, then return to 1000 when
+idle. Responses are limited to 512 KB, requests have a
 five-second upstream timeout, redirects are rejected. Providers should retain
 bounded state, validate actions, deduplicate requests, and enforce application
 limits. Return `400`, `409`, or `429` with a short textual `error` for user-facing
@@ -94,7 +96,7 @@ Frames announce readiness with `postMessage` to `parentOrigin`:
 Parent state messages:
 
 ```json
-{"type":"ninjitsi.widget.state.v1","channel":"...","state":{},"serverNow":1794200000000,"roundTripMs":120}
+{"type":"ninjitsi.widget.state.v1","channel":"...","state":{},"serverNow":1794200000000,"roundTripMs":120,"viewport":{"left":0,"top":0,"width":1100,"height":900}}
 ```
 
 Only the controls frame may request an action:
@@ -111,6 +113,18 @@ origin, source frame, channel and action name; the stage cannot perform actions.
 Clock synchronization is approximate: providers should publish an authoritative
 timeline, schedule it slightly ahead, and let late clients catch up. The host
 does not independently simulate or select application results.
+
+`viewport` gives the presentation area in CSS pixels relative to the stage.
+On desktop it ends at the open chat's left edge; with chat collapsed and on
+mobile it spans the full viewport. The host also sends
+`ninjitsi.widget.viewport.v1` with the same `channel` and `viewport` when chat or
+window size changes. The animation stage itself remains fullscreen.
+
+Actions include `actor.avatarUrl`, a bounded raster data URL derived from the
+participant's local avatar, or an empty string. This is optional presentation
+data, not identity. The server always supplies the admitted `actor.id` and
+`actor.name`; provider content cannot override them or choose an external avatar
+URL. Providers that do not display avatars may ignore this field.
 
 ## Compact controls and dragging
 

@@ -7,6 +7,7 @@ export interface RoomWidget {
   id:string;title:string;url:string;commands:string[];active?:boolean;unavailable?:boolean;
   commandActions?:Record<string,string>;
   version?:number;activation?:string;state:unknown;serverNow?:number;roundTripMs?:number;
+  pollAfterMs?:number;
   messages?:Array<{id:string;text:string;senderName:string;timestamp:number}>;
 }
 export function useRoomWidgets(room:string,token:string|null,active:boolean,chat:ChatMessage[]){
@@ -54,7 +55,7 @@ export function useRoomWidgets(room:string,token:string|null,active:boolean,chat
         if(changedMessages)setMessages([...messageCache.current.values()]);
         setWidgets(stateRef.current);setError('');
       }catch{if(!abort.signal.aborted)setError('Не удалось связаться с виджетами комнаты');}
-      if(!abort.signal.aborted)timer=setTimeout(()=>void poll(),1000);
+      if(!abort.signal.aborted)timer=setTimeout(()=>void poll(),Math.min(1000,...stateRef.current.map(w=>Math.max(100,w.pollAfterMs??1000))));
     };
     void poll();return()=>{abort.abort();clearTimeout(timer);};
   },[active,token,url]);

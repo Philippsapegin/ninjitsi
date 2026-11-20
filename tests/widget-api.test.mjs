@@ -11,7 +11,7 @@ test('widget admission is isolated from bots/chat and never leaks provider crede
     let raw='';for await(const chunk of req)raw+=chunk;
     forwarded=raw?JSON.parse(raw):undefined;
     res.setHeader('Content-Type','application/json');
-    res.end(JSON.stringify(req.method==='GET'?{active:true,version:1,activation:'a',serverNow:Date.now(),state:{application:'data'},messages:[]}:{accepted:forwarded}));
+    res.end(JSON.stringify(req.method==='GET'?{active:true,version:1,activation:'a',serverNow:Date.now(),pollAfterMs:100,state:{application:'data'},messages:[]}:{accepted:forwarded}));
   });
   await new Promise(resolve=>provider.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>provider.close(resolve)));
@@ -28,12 +28,18 @@ test('widget admission is isolated from bots/chat and never leaks provider crede
     return response;
   };
   const list=await call('test-room/widgets');assert.equal(list.status,200);assert.equal(list.body.widgets[0].active,true);
+  assert.equal(list.body.widgets[0].pollAfterMs,100);
   assert.deepEqual(list.body.widgets[0].commandActions,{test_help:'help',test_exit:'exit'});
   assert(!JSON.stringify(list.body).includes('test-provider-token'));assert(!('serviceUrl'in list.body.widgets[0]));
   assert.equal((await call('other-room/widgets')).status,401);
   assert.equal((await call('test-room/widgets',undefined,'wrong')).status,401);
   const action=await call('test-room/widgets/test-widget/actions',{requestId:'one',action:'anything',payload:{actor:{id:'evil',name:'Evil'},requestId:'override',value:12}});
   assert.equal(action.status,200);assert.equal(forwarded.actor.name,'Alice');assert.equal(forwarded.requestId,'one');assert.equal(forwarded.value,12);
+  const avatar='data:image/png;base64,aGVsbG8=';
+  await call('test-room/widgets/test-widget/actions',{requestId:'avatar',action:'roll',payload:{actor:{name:'Evil'}},presentation:{avatarUrl:avatar}});
+  assert.equal(forwarded.actor.avatarUrl,avatar);assert.equal(forwarded.actor.name,'Alice');
+  await call('test-room/widgets/test-widget/actions',{requestId:'url-avatar',action:'roll',payload:{},presentation:{avatarUrl:'https://external.example/avatar.png'}});
+  assert.equal(forwarded.actor.avatarUrl,'');
   const invalid=await call('test-room/widgets/test-widget/actions',{requestId:'two',action:'../../escape',payload:{}});assert.equal(invalid.status,400);
   const response={setHeader(){}};
   await bot.handle({method:'GET',headers:{authorization:`Bearer ${capability}`}},response,new URL('http://localhost/api/v1/rooms/test-room/events'));
