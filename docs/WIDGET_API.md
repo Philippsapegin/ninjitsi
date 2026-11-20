@@ -110,6 +110,12 @@ Replies use `ninjitsi.widget.response.v1`, the same `channel` and `id`, and eith
 and channel before accepting state or replies. Ninjitsi verifies the provider
 origin, source frame, channel and action name; the stage cannot perform actions.
 
+A successful HTTP action reply may also contain `state`, `version`, `active`,
+`activation`, and `serverNow`, following the state-reply contract. Ninjitsi
+publishes that state to both frames immediately. This lets an interaction start
+an animation without waiting for the next poll. A delayed poll with an older
+version cannot replace a newer action result within the same activation.
+
 Clock synchronization is approximate: providers should publish an authoritative
 timeline, schedule it slightly ahead, and let late clients catch up. The host
 does not independently simulate or select application results.

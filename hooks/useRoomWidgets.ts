@@ -23,9 +23,19 @@ export function useRoomWidgets(room:string,token:string|null,active:boolean,chat
     queueMicrotask(()=>{setWidgets([]);setMessages([]);setError('');});
   },[room]);
   const call=useCallback(async(id:string,action:string,body:object)=>{
+    const started=performance.now();
     const response=await fetch(`${url}/${id}/${action}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10_000)});
     const result=await response.json();
     if(!response.ok)throw new Error(result.error??'Widget unavailable');
+    // A provider can publish its authoritative state in an action reply. Send
+    // it to the overlay immediately, instead of waiting for the next poll.
+    if(result.state&&typeof result.state==='object'){
+      stateRef.current=stateRef.current.map(previous=>previous.id!==id?previous:
+        previous.activation===result.activation&&typeof result.version==='number'&&(previous.version??0)>result.version?previous:
+        {...previous,state:result.state,version:result.version??previous.version,active:typeof result.active==='boolean'?result.active:previous.active,
+          activation:result.activation??previous.activation,serverNow:result.serverNow??previous.serverNow,roundTripMs:performance.now()-started});
+      setWidgets(stateRef.current);
+    }
     return result;
   },[token,url]);
   useEffect(()=>{
@@ -41,6 +51,7 @@ export function useRoomWidgets(room:string,token:string|null,active:boolean,chat
         if(abort.signal.aborted)return;
         stateRef.current=data.widgets.map(widget=>{
           const previous=stateRef.current.find(item=>item.id===widget.id);
+          if(previous?.active&&widget.active&&previous.activation===widget.activation&&(previous.version??0)>(widget.version??0))return previous;
           return {...widget,state:widget.state??previous?.state,active:widget.unavailable?previous?.active:widget.active,
             activation:widget.activation??previous?.activation,roundTripMs:performance.now()-start};
         });
