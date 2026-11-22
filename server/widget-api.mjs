@@ -1,5 +1,15 @@
 import { SlidingWindowRateLimiter } from './security.mjs';
 
+const commandName = /^[a-z][a-z0-9_-]{0,30}$/;
+const commandPrefix = command => command.endsWith('_*') ? command.slice(0,-1) : null;
+function commandsOverlap(first,second) {
+  const a=commandPrefix(first),b=commandPrefix(second);
+  if(a&&b)return a.startsWith(b)||b.startsWith(a);
+  if(a)return second.length>a.length&&second.startsWith(a);
+  if(b)return first.length>b.length&&first.startsWith(b);
+  return first===second;
+}
+
 export function createWidgetApi({ configuration = '[]', verifyAdmission, getRoom, readJsonBody, json }) {
   const registry = JSON.parse(configuration);
   if (!Array.isArray(registry) || registry.length > 8) throw new Error('NINJITSI_WIDGETS must be an array of at most eight widgets');
@@ -8,7 +18,7 @@ export function createWidgetApi({ configuration = '[]', verifyAdmission, getRoom
     if (!value || typeof value.id !== 'string' || !/^[a-z0-9-]{1,40}$/.test(value.id) || ids.has(value.id) ||
         typeof value.title !== 'string' || !value.title.trim() || value.title.length > 60 ||
         !Array.isArray(value.commands) || !value.commands.length || value.commands.length > 8 ||
-        !value.commands.every(command => typeof command === 'string' && /^[a-z][a-z0-9_-]{0,30}$/.test(command) && !commands.has(command)) ||
+        !value.commands.every(command => typeof command === 'string' && commandName.test(command)) ||
         typeof value.token !== 'string' || value.token.length < 32) throw new Error('Invalid widget registration');
     const url = new URL(value.url), serviceUrl = new URL(value.serviceUrl);
     for (const parsed of [url, serviceUrl]) {
@@ -16,8 +26,12 @@ export function createWidgetApi({ configuration = '[]', verifyAdmission, getRoom
     }
     const commandActions=value.commandActions??{};
     if(!commandActions||typeof commandActions!=='object'||Array.isArray(commandActions)||Object.keys(commandActions).length>16||
-      Object.entries(commandActions).some(([command,action])=>!/^[a-z][a-z0-9_-]{0,30}$/.test(command)||commands.has(command)||value.commands.includes(command)||typeof action!=='string'||!/^[-\w]{1,40}$/.test(action)))throw new Error('Invalid widget command actions');
-    ids.add(value.id);[...value.commands,...Object.keys(commandActions)].forEach(command => commands.add(command));
+      Object.entries(commandActions).some(([command,action])=>!commandName.test(commandPrefix(command)??command)||typeof action!=='string'||!/^[-\w]{1,40}$/.test(action)))throw new Error('Invalid widget command actions');
+    for(const command of [...value.commands,...Object.keys(commandActions)]){
+      if([...commands].some(existing=>commandsOverlap(existing,command)))throw new Error('Overlapping widget commands');
+      commands.add(command);
+    }
+    ids.add(value.id);
     return { ...value,commandActions, url:url.href, serviceUrl:serviceUrl.href.replace(/\/$/, '') };
   });
   const limiter = new SlidingWindowRateLimiter({ limit:1200, windowMs:60_000 });

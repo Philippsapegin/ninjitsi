@@ -20,7 +20,8 @@ test('widget admission is isolated from bots/chat and never leaks provider crede
   const json=(res,status,body)=>Object.assign(res,{status,body});
   const core={getRoom:code=>code===room.code?room:undefined,json,readJsonBody:async req=>req.body};
   const bot=createBotApi({...core});
-  const widget=createWidgetApi({...core,configuration:JSON.stringify([{id:'test-widget',title:'Test widget',commands:['test'],commandActions:{test_help:'help',test_exit:'exit'},url:`${url}/widget`,serviceUrl:url,token:'test-provider-token-with-at-least-32-characters'}]),verifyAdmission:bot.verifyWidgetAdmission});
+  const commandActions={test_help:'help',test_exit:'exit',test_set:'list','test_set_*':'set'};
+  const widget=createWidgetApi({...core,configuration:JSON.stringify([{id:'test-widget',title:'Test widget',commands:['test'],commandActions,url:`${url}/widget`,serviceUrl:url,token:'test-provider-token-with-at-least-32-characters'}]),verifyAdmission:bot.verifyWidgetAdmission});
   const capability=bot.issueWidgetAdmission(room,'Alice');
   const call=async(path,body,token=capability)=>{
     const response={setHeader(){}};
@@ -29,7 +30,7 @@ test('widget admission is isolated from bots/chat and never leaks provider crede
   };
   const list=await call('test-room/widgets');assert.equal(list.status,200);assert.equal(list.body.widgets[0].active,true);
   assert.equal(list.body.widgets[0].pollAfterMs,100);
-  assert.deepEqual(list.body.widgets[0].commandActions,{test_help:'help',test_exit:'exit'});
+  assert.deepEqual(list.body.widgets[0].commandActions,commandActions);
   assert(!JSON.stringify(list.body).includes('test-provider-token'));assert(!('serviceUrl'in list.body.widgets[0]));
   assert.equal((await call('other-room/widgets')).status,401);
   assert.equal((await call('test-room/widgets',undefined,'wrong')).status,401);
@@ -51,4 +52,7 @@ test('unsafe widget provider registration fails closed',()=>{
   for(const bad of [{...base,serviceUrl:'file:///secret'},{...base,url:'https://user:password@widget.example/widget'},
     {...base,commands:['../escape']},{...base,token:'short'}])assert.throws(()=>createWidgetApi({configuration:JSON.stringify([bad])}));
   assert.throws(()=>createWidgetApi({configuration:JSON.stringify([base,base])}));
+  assert.throws(()=>createWidgetApi({configuration:JSON.stringify([{...base,commandActions:{'test_*':'set',test_help:'help'}}])}));
+  assert.throws(()=>createWidgetApi({configuration:JSON.stringify([{...base,commandActions:{'test*':'set'}}])}));
+  assert.throws(()=>createWidgetApi({configuration:JSON.stringify([{...base,commandActions:{'test_*':'set'}},{...base,id:'other',commands:['other'],commandActions:{'test_option_*':'set'}}])}));
 });

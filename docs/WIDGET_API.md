@@ -19,10 +19,13 @@ Registration makes the widget available in admitted rooms, including newly
 created rooms. No per-room server reconfiguration is needed to activate one.
 
 Optional `commandActions` maps additional public slash-command names (without
-`/`) to provider actions, for example `{"dice_help":"help","dice_exit":"exit"}`.
-These call `/actions/{action}` with an empty application payload and the signed
-actor identity. They do not implicitly activate the widget. Command names must
-be unique across activation commands and action mappings of all providers.
+`/`) to provider actions, for example `{"dice_help":"help","dice_set_*":"set"}`.
+An exact command sends an empty application payload to `/actions/{action}`.
+A mapping ending in `_*` matches a command with text after the underscore and
+sends that text lowercased as `{suffix}`, for example `/dice_set_Gold` sends
+`{"suffix":"gold"}`. Both use the signed actor identity and can run while the
+widget is inactive. Exact names and prefix patterns may not overlap across
+activation commands or action mappings.
 An inactive provider may still return help/acknowledgement messages; these reach
 the room chat without opening a window. Returning `active:false` closes the
 shared widget on every client.

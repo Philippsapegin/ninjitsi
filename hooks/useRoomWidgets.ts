@@ -10,6 +10,20 @@ export interface RoomWidget {
   pollAfterMs?:number;
   messages?:Array<{id:string;text:string;senderName:string;timestamp:number}>;
 }
+
+function matchCommand(widgets:RoomWidget[],command:string) {
+  for(const widget of widgets){
+    if(widget.commands.includes(command))return {widget};
+    const actions=widget.commandActions??{};
+    if(Object.hasOwn(actions,command))return {widget,action:actions[command],payload:{}};
+    for(const [key,action] of Object.entries(actions)){
+      if(!key.endsWith('_*'))continue;
+      const prefix=key.slice(0,-1);
+      if(command.startsWith(prefix)&&command.length>prefix.length)return {widget,action,payload:{suffix:command.slice(prefix.length)}};
+    }
+  }
+}
+
 export function useRoomWidgets(room:string,token:string|null,active:boolean,chat:ChatMessage[]){
   const [widgets,setWidgets]=useState<RoomWidget[]>([]);
   const [messages,setMessages]=useState<ChatMessage[]>([]);
@@ -76,10 +90,10 @@ export function useRoomWidgets(room:string,token:string|null,active:boolean,chat
       if(!message.isLocal||message.isPrivate||message.attachments?.length||seen.current.has(message.id))continue;
       const command=message.text.trim().match(/^\/([a-z][a-z0-9_-]*)(?:\s.*)?$/i)?.[1]?.toLowerCase();
       if(!command)continue;
-      const widget=widgets.find(widget=>widget.commands.includes(command)||Object.hasOwn(widget.commandActions??{},command));if(!widget)continue;
+      const match=matchCommand(widgets,command);if(!match)continue;
       seen.current.add(message.id);
-      const action=widget.commandActions?.[command];
-      void call(widget.id,action?'actions':'activate',{requestId:message.id,...(action?{action,payload:{}}:{})}).catch(failure=>{
+      const {widget,action,payload}=match;
+      void call(widget.id,action?'actions':'activate',{requestId:message.id,...(action?{action,payload}:{})}).catch(failure=>{
         // Retrying the chat command is explicit; repeating renders never
         // trigger an activation storm while a provider is unavailable.
         setError(failure.message);
