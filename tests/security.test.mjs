@@ -243,6 +243,31 @@ test("room server prunes expired rooms, preserves capacity and issues admission 
   assert.equal(tokenPayload.room, first.room.code);
   assert.equal(tokenPayload.context.user.name, "Alice");
 
+  const roomUrl = `${baseUrl}/api/rooms/${first.room.code}`;
+  const rotate = (password, token) => fetch(`${roomUrl}/password`, {
+    body: JSON.stringify({ password }),
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    method: "PATCH",
+  });
+  const joinRoom = (password) => fetch(`${roomUrl}/join`, {
+    body: JSON.stringify({ displayName: "Alice", password }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.match(first.ownerToken, /^[a-zA-Z0-9_-]{43}$/);
+  const publicDetails = await (await fetch(roomUrl)).json();
+  assert.equal(publicDetails.room.passwordManagedByNin, true);
+  assert.equal(JSON.stringify(publicDetails).includes(first.ownerToken), false);
+  assert.equal((await rotate("other-room", second.ownerToken)).status, 403);
+  assert.equal((await rotate("guest", admitted.jitsiToken)).status, 403);
+  assert.equal((await rotate("new password", first.ownerToken)).status, 200);
+  assert.equal((await joinRoom("correct horse battery staple")).status, 403);
+  assert.equal((await joinRoom("new password")).status, 200);
+  const unlocked = await rotate("", first.ownerToken);
+  assert.equal(unlocked.status, 200);
+  assert.equal((await unlocked.json()).room.passwordRequired, false);
+  assert.equal((await joinRoom("")).status, 200);
+
   const fullResponse = await fetch(`${baseUrl}/api/rooms`, {
     body: JSON.stringify({ password: "" }),
     headers: { "Content-Type": "application/json" },
@@ -259,6 +284,8 @@ test("room server prunes expired rooms, preserves capacity and issues admission 
   );
   assert.equal(stored.version, 2);
   assert.equal(stored.rooms.length, 2);
+  assert.match(stored.rooms.find(room => room.code === first.room.code).ownerTokenHash, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(stored).includes(first.ownerToken), false);
 });
 
 async function reservePort() {

@@ -31,16 +31,15 @@ export function savePendingJoin(details: PendingJoinDetails): void {
 export function rememberCreatedRoom(
   roomName: string,
   password: string,
+  ownerToken?: string,
 ): void {
   sessionStorage.setItem(
     `${CREATED_ROOM_PREFIX}${roomName}`,
-    JSON.stringify({ password }),
+    JSON.stringify({ password, ownerToken }),
   );
 }
 
-export function readCreatedRoomPassword(
-  roomName: string,
-): string | null {
+function readCreatedRoom(roomName: string) {
   const raw = sessionStorage.getItem(`${CREATED_ROOM_PREFIX}${roomName}`);
 
   if (!raw) {
@@ -48,13 +47,21 @@ export function readCreatedRoomPassword(
   }
 
   try {
-    const parsed = JSON.parse(raw) as { password?: unknown };
-
-    return typeof parsed.password === "string" ? parsed.password : null;
+    const parsed = JSON.parse(raw) as { password?: unknown; ownerToken?: unknown };
+    return {
+      password: typeof parsed.password === "string" ? parsed.password : null,
+      ownerToken: typeof parsed.ownerToken === "string" ? parsed.ownerToken : null,
+    };
   } catch {
     return null;
   }
 }
+
+export const readCreatedRoomPassword = (roomName: string) =>
+  readCreatedRoom(roomName)?.password ?? null;
+
+export const readCreatedRoomOwnerToken = (roomName: string) =>
+  readCreatedRoom(roomName)?.ownerToken ?? null;
 
 export function readPendingJoin(): PendingJoinDetails | null {
   const raw = sessionStorage.getItem(PENDING_JOIN_KEY);

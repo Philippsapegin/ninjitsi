@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chromium } from "playwright-core";
 
@@ -246,6 +247,27 @@ try {
     (await creatorPassword.getAttribute("type")) !== "password"
   ) {
     throw new Error("Создатель не видит сохранённый пароль комнаты.");
+  }
+  if (process.env.JITSI_AUTH_MODE === "token") {
+    const applyPassword = page.getByRole("button", { name: /^(Применить|Применяем…)$/ });
+    assert.equal(await creatorPassword.isEditable(), true);
+    assert.equal(await applyPassword.count(), 0);
+    await creatorPassword.fill("profile-secret-updated");
+    const passwordSaved = page.waitForResponse((response) =>
+      response.request().method() === "PATCH" && new URL(response.url()).pathname.endsWith("/password"),
+    );
+    await applyPassword.click();
+    assert.equal((await passwordSaved).status(), 200);
+    await applyPassword.waitFor({ state:"hidden" });
+    assert.equal(await creatorPassword.inputValue(), "profile-secret-updated");
+    const code = new URL(page.url()).pathname.split("/").at(-1);
+    const joinRoom = (password) => fetch(`${baseUrl}/api/rooms/${code}/join`, {
+      body: JSON.stringify({ displayName:"Password Tester", password }),
+      headers: { "Content-Type":"application/json" },
+      method:"POST",
+    });
+    assert.equal((await joinRoom("profile-secret")).status, 403);
+    assert.equal((await joinRoom("profile-secret-updated")).status, 200);
   }
   const videoBackgroundToggle = page.getByRole("switch", {
     name: "Фон профиля",

@@ -5,6 +5,7 @@ export interface RoomRecord {
   createdAt: string;
   expiresAt: string;
   passwordRequired: boolean;
+  passwordManagedByNin?: boolean;
 }
 
 interface RoomResponse {
@@ -13,6 +14,7 @@ interface RoomResponse {
 
 interface CreateRoomResponse extends RoomResponse {
   joinPath: string;
+  ownerToken?: string;
 }
 
 interface RoomAdmissionResponse extends RoomResponse {
@@ -97,6 +99,14 @@ export async function getRoom(code: string): Promise<RoomRecord> {
     `/api/rooms/${encodeURIComponent(code)}`,
   );
 
+  return response.room;
+}
+
+export async function changeRoomPassword(code: string, ownerToken: string, password: string) {
+  const response = await roomRequest<RoomResponse>(
+    `/api/rooms/${encodeURIComponent(code)}/password`,
+    { method:"PATCH", body:JSON.stringify({ password }), headers:{ Authorization:`Bearer ${ownerToken}` } },
+  );
   return response.room;
 }
 

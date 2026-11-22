@@ -224,6 +224,21 @@ export function ChatSidebar({
     }
   }
 
+  function recallLastMessage() {
+    const message = messages.findLast((item) =>
+      item.isLocal && !item.isBot && !item.attachments?.length && Boolean(item.text.trim()),
+    );
+    if (!message) return false;
+    const recipients = message.isPrivate ? message.recipientIds ?? [] : [];
+    if (message.isPrivate && !recipients.length) return false;
+
+    setDraft(message.text);
+    setReplyTo(message.replyTo);
+    setSelectedRecipientIds(recipients);
+    setResetRecipientsAfterSend(Boolean(message.isPrivate));
+    return true;
+  }
+
   async function sendFiles(files: File[]) {
     if (disabled || recipientUnavailable || files.length === 0) {
       return;
@@ -681,6 +696,13 @@ export function ChatSidebar({
               maxLength={4000}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                if (event.key === "ArrowUp" && !event.currentTarget.value &&
+                    !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey &&
+                    recallLastMessage()) {
+                  event.preventDefault();
+                  return;
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();

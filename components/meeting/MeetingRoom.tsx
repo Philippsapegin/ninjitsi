@@ -21,10 +21,12 @@ import { getStoredLocale, localize, useI18n } from "@/lib/i18n";
 import { useJitsiConference } from "@/lib/jitsi/useJitsiConference";
 import type { JoinOptions } from "@/lib/jitsi/useJitsiConference";
 import {
+  readCreatedRoomOwnerToken,
   readCreatedRoomPassword,
   readPendingJoin,
+  rememberCreatedRoom,
 } from "@/lib/room";
-import { authorizeRoom, getRoom, RoomApiError } from "@/lib/roomApi";
+import { authorizeRoom, changeRoomPassword, getRoom, RoomApiError } from "@/lib/roomApi";
 import { useRoomApiEnabled } from "@/lib/runtimeConfig";
 import { playNinjitsiSound, prepareNinjitsiSounds } from "@/lib/sounds";
 import { DEFAULT_PROFILE_TILE_COLOR } from "@/lib/profiles";
@@ -80,6 +82,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     useState<JoinOptions>(EMPTY_JOIN_DETAILS);
   const [joinDetailsReady, setJoinDetailsReady] = useState(false);
   const [protectedRoom, setProtectedRoom] = useState(false);
+  const [roomOwnerToken, setRoomOwnerToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [admissionError, setAdmissionError] = useState("");
   const [isAdmissionBusy, setIsAdmissionBusy] = useState(false);
@@ -223,6 +226,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     queueMicrotask(() => {
       const pending = readPendingJoin();
       const creatorPassword = readCreatedRoomPassword(roomName);
+      setRoomOwnerToken(readCreatedRoomOwnerToken(roomName));
 
       setJoinDetails(
         pending
@@ -336,6 +340,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         setWidgetToken(admission.widgetToken??null);
         await conference.join({
           ...details,
+          password: admission.room.passwordManagedByNin ? "" : details.password,
           jitsiToken: admission.jitsiToken,
         });
       } else {
@@ -353,6 +358,14 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
     } finally {
       setIsAdmissionBusy(false);
     }
+  }
+
+  async function applyRoomPassword(password: string) {
+    if (!roomOwnerToken) return;
+    const room = await changeRoomPassword(roomName, roomOwnerToken, password);
+    setProtectedRoom(room.passwordRequired);
+    setJoinDetails(current => ({ ...current, password }));
+    rememberCreatedRoom(roomName, password, roomOwnerToken);
   }
 
   async function hangup() {
@@ -469,6 +482,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             onNoiseSuppressionChange={conference.setNoiseSuppressionEnabled}
             pushToTalkEnabled={ptt.enabled}
             onPushToTalkChange={ptt.change}
+            onRoomPasswordChange={roomApiEnabled && roomOwnerToken ? applyRoomPassword : undefined}
             onVideoBackgroundChange={
               conference.setVideoBackgroundEnabled
             }

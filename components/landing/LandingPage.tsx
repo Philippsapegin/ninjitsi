@@ -80,8 +80,9 @@ export function LandingPage() {
       let targetRoom: string;
 
       if (mode === "create") {
-        targetRoom = (await createRoom(password)).room.code;
-        rememberCreatedRoom(targetRoom, password);
+        const created = await createRoom(password);
+        targetRoom = created.room.code;
+        rememberCreatedRoom(targetRoom, password, created.ownerToken);
       } else {
         targetRoom = (await getRoom(normalizedRoom)).code;
       }

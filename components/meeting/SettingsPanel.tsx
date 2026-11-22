@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Camera,
   Check,
@@ -35,6 +35,7 @@ interface SettingsPanelProps {
   onPushToTalkChange: (enabled: boolean) => void;
   onVideoInputChange: (deviceId: string) => Promise<void>;
   onVideoBackgroundChange: (enabled: boolean) => Promise<void>;
+  onRoomPasswordChange?: (password: string) => Promise<void>;
   roomPassword: string | null;
   status: MeetingStatus;
   videoBackgroundAvailable: boolean;
@@ -66,6 +67,7 @@ export function SettingsPanel({
   onPushToTalkChange,
   onVideoInputChange,
   onVideoBackgroundChange,
+  onRoomPasswordChange,
   roomPassword,
   status,
   videoBackgroundAvailable,
@@ -76,6 +78,12 @@ export function SettingsPanel({
   const { locale, setLocale, tr } = useI18n();
   const [open, setOpen] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [passwordDraft, setPasswordDraft] = useState<string | null>(null);
+  const [passwordPending, setPasswordPending] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const passwordInputId = useId();
+  const passwordValue = passwordDraft ?? roomPassword ?? "";
+  const passwordEdited = passwordValue !== roomPassword;
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputSupported] = useState(
     () => typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype,
@@ -86,6 +94,22 @@ export function SettingsPanel({
       "selectAudioOutput" in navigator.mediaDevices,
   );
   const panelRef = useRef<HTMLDivElement>(null);
+
+  async function applyPassword() {
+    if (!onRoomPasswordChange || !passwordEdited || passwordPending) return;
+    setPasswordPending(true);
+    setPasswordError("");
+    try {
+      await onRoomPasswordChange(passwordValue);
+      setPasswordDraft(null);
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : tr(
+        "Could not change the room password.", "Не удалось сменить пароль комнаты.",
+      ));
+    } finally {
+      setPasswordPending(false);
+    }
+  }
 
   useEffect(() => {
     if (!open || !navigator.mediaDevices?.enumerateDevices) {
@@ -407,18 +431,19 @@ export function SettingsPanel({
           </div>
 
           {roomPassword !== null && (
-            <label className={styles.creatorPassword}>
-              <span>
+            <div className={styles.creatorPassword}>
+              <label htmlFor={passwordInputId}>
                 <LockKeyhole size={14} />
                 {tr("Room password", "Пароль комнаты")}
-              </span>
+              </label>
               <div>
                 <button
                   aria-label={tr(
                     "Hold to show password",
                     "Удерживайте, чтобы показать пароль",
                   )}
-                  disabled={!roomPassword}
+                  className={styles.passwordReveal}
+                  disabled={!passwordValue}
                   onBlur={() => setPasswordVisible(false)}
                   onPointerCancel={() => setPasswordVisible(false)}
                   onPointerDown={() => setPasswordVisible(true)}
@@ -429,14 +454,33 @@ export function SettingsPanel({
                   <LockKeyhole size={15} />
                 </button>
                 <input
+                  id={passwordInputId}
                   aria-label={tr("Creator room password", "Пароль комнаты создателя")}
+                  autoComplete="new-password"
+                  maxLength={200}
+                  onChange={event => {
+                    setPasswordDraft(event.target.value);
+                    setPasswordError("");
+                  }}
                   placeholder={tr("No password", "Без пароля")}
-                  readOnly
+                  readOnly={!onRoomPasswordChange || passwordPending}
                   type={passwordVisible ? "text" : "password"}
-                  value={roomPassword}
+                  value={passwordValue}
                 />
               </div>
-            </label>
+              {onRoomPasswordChange && (
+                <div className={styles.passwordApply} data-visible={passwordEdited}
+                  aria-hidden={!passwordEdited}>
+                  <div>
+                    <button disabled={!passwordEdited || passwordPending}
+                      onClick={() => void applyPassword()} type="button">
+                      {passwordPending ? tr("Applying…", "Применяем…") : tr("Apply", "Применить")}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {passwordError && <p className={styles.passwordError} role="alert">{passwordError}</p>}
+            </div>
           )}
 
           <FeedDiagnostics

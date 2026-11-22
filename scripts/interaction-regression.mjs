@@ -134,7 +134,7 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
         <div data-bot-messages>{bots.botMessages.map(m=><p key={m.id}>{m.senderName}: {m.text}</p>)}</div>
         {c.participants.map(p=><div key={p.id} data-testid={'tile-'+p.id}><VideoTile activationLabel="Focus" onActivate={()=>{}} onVolumeChange={()=>{}} participant={p} volume={1}/></div>)}
         <ChatSidebar disabled={false} isSendingAttachment={false} messages={[...messages.filter(m=>!m.attachments)]}
-          participants={c.participants} onSend={()=>{}} onSendAttachment={async()=>{}}/>
+          participants={c.participants} onSend={(...args)=>{window.__lastChatSubmission=args;}} onSendAttachment={async()=>{}}/>
         <MeetingToasts conferenceError={c.error} widgetError={showToasts?'Widget request failed':undefined}
           botUnavailable={showToasts} reconnecting={showToasts}/></>;
     }
@@ -329,6 +329,23 @@ try {
   await appendHistory(25,26);
   await page.getByText("Message 25",{exact:true}).waitFor();
   assert.equal(await list.evaluate(element=>element.scrollHeight-element.clientHeight-element.scrollTop),0,"the latest message is followed near the bottom");
+
+  await page.evaluate(() => {
+    const local = { isLocal:true,senderId:"local",senderName:"Alice",timestamp:Date.now() };
+    window.__interaction.send({...local,id:"own-message",text:"My private message",isPrivate:true,recipientIds:["remote"]});
+    window.__interaction.send({...local,id:"bot-message",text:"A bot reply",isBot:true});
+  });
+  await appendHistory(26,27);
+  await page.getByText("Message 26",{exact:true}).waitFor();
+  const chatDraft = page.getByRole("textbox",{name:"Chat message",exact:true});
+  await chatDraft.press("ArrowUp");
+  assert.equal(await chatDraft.inputValue(),"My private message");
+  await chatDraft.fill("Revised private message");
+  await chatDraft.press("ArrowUp");
+  assert.equal(await chatDraft.inputValue(),"Revised private message");
+  await chatDraft.press("Enter");
+  assert.deepEqual(await page.evaluate(() => window.__lastChatSubmission),["Revised private message",["remote"],undefined]);
+
   await page.clock.install();
   await page.evaluate(()=>window.__interaction.showToasts(true));
   const widgetToast=page.getByRole("button",{name:/Widget request failed.*Dismiss notification/});

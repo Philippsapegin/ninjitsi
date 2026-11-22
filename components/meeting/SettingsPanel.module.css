@@ -220,7 +220,7 @@
   gap: 7px;
 }
 
-.creatorPassword > span {
+.creatorPassword > label {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -249,7 +249,7 @@
   color: var(--text-faint);
 }
 
-.creatorPassword button {
+.passwordReveal {
   position: absolute;
   z-index: 1;
   top: 0;
@@ -266,14 +266,69 @@
   touch-action: none;
 }
 
-.creatorPassword button:hover:not(:disabled),
-.creatorPassword button:active:not(:disabled) {
+.passwordReveal:hover:not(:disabled),
+.passwordReveal:active:not(:disabled) {
   color: var(--accent);
 }
 
-.creatorPassword button:disabled {
+.passwordReveal:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.passwordApply {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: -7px;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: grid-template-rows 190ms ease, margin-top 190ms ease,
+    opacity 150ms ease, transform 190ms ease;
+}
+
+.passwordApply[data-visible="true"] {
+  grid-template-rows: 1fr;
+  margin-top: 0;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.passwordApply > div {
+  overflow: hidden;
+}
+
+.passwordApply button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--surface);
+  background: var(--accent);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.passwordApply button:disabled {
+  opacity: .6;
+}
+
+.passwordApply button:focus-visible {
+  border-color: var(--surface);
+  outline-offset: -3px;
+}
+
+.passwordError {
+  margin: 0;
+  color: #ffd0cd;
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .passwordApply {
+    transition: none;
+  }
 }
 
 .toggleIcon {
@@ -349,7 +404,7 @@
   }
 
   .selectField > span,
-  .creatorPassword > span,
+  .creatorPassword > label,
   .toggleRow strong,
   .languageRow strong,
   .outputPicker {

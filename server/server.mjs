@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import {
+  createHash,
   randomBytes,
   scrypt as scryptCallback,
   timingSafeEqual,
@@ -269,6 +270,9 @@ function publicRoom(room) {
     createdAt: room.createdAt,
     expiresAt: room.expiresAt,
     passwordRequired: room.passwordRequired,
+    ...(jitsiAuthMode === "token" && room.ownerTokenHash
+      ? { passwordManagedByNin: true }
+      : {}),
   };
 }
 
@@ -389,6 +393,17 @@ async function passwordMatches(room, password) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+async function passwordFields(password) {
+  const passwordSalt = password ? randomBytes(16).toString("hex") : "";
+  return {
+    passwordHash: password ? (await passwordDigest(password, passwordSalt)).toString("hex") : "",
+    passwordRequired: Boolean(password),
+    passwordSalt,
+  };
+}
+
+const ownerDigest = token => createHash("sha256").update(token).digest();
+
 async function readJsonBody(request) {
   const chunks = [];
   let size = 0;
@@ -414,15 +429,7 @@ async function readJsonBody(request) {
   }
 }
 
-async function persistRooms() {
-  const snapshot = JSON.stringify(
-    {
-      rooms: Array.from(rooms.values()),
-      version: 2,
-    },
-    null,
-    2,
-  );
+async function persistRooms(replacement) {
   const temporaryPath = `${roomsPath}.${process.pid}.tmp`;
 
   writeQueue = writeQueue
@@ -430,8 +437,21 @@ async function persistRooms() {
       console.error(`Previous room registry write failed: ${error.message}`);
     })
     .then(async () => {
+      if (replacement && rooms.get(replacement.previous.code) !== replacement.previous) {
+        return false;
+      }
+      const snapshot = JSON.stringify({
+        rooms: Array.from(rooms.values(), room =>
+          replacement && room === replacement.previous ? replacement.updated : room),
+        version: 2,
+      }, null, 2);
       await writeFile(temporaryPath, snapshot, { encoding: "utf8", mode: 0o600 });
       await rename(temporaryPath, roomsPath);
+      if (replacement) {
+        if (rooms.get(replacement.previous.code) !== replacement.previous) return false;
+        rooms.set(replacement.updated.code, replacement.updated);
+      }
+      return true;
     });
 
   return writeQueue;
@@ -565,13 +585,10 @@ async function handleApi(request, response, pathname) {
       return true;
     }
 
-    const passwordSalt = password ? randomBytes(16).toString("hex") : "";
-    let passwordHash = "";
+    let fields;
 
     try {
-      passwordHash = password
-        ? (await passwordDigest(password, passwordSalt)).toString("hex")
-        : "";
+      fields = await passwordFields(password);
     } catch (error) {
       if (error instanceof CapacityError) {
         scryptBusy(request, response);
@@ -589,21 +606,70 @@ async function handleApi(request, response, pathname) {
 
     const code = nextRoomCode();
     const createdAt = new Date().toISOString();
+    // In token mode the Jitsi server requires a room-scoped admission token.
+    // Nin can enforce the password without maintaining a second MUC password.
+    const ownerToken = jitsiAuthMode === "token" ? randomBytes(32).toString("base64url") : undefined;
     const room = {
       code,
       createdAt,
       expiresAt: roomExpiration(createdAt),
-      passwordHash,
-      passwordRequired: Boolean(password),
-      passwordSalt,
+      ...fields,
+      ...(ownerToken ? { ownerTokenHash: ownerDigest(ownerToken).toString("hex") } : {}),
     };
 
     rooms.set(code, room);
     await persistRooms();
     json(response, 201, {
       joinPath: `/room/${code}`,
+      ownerToken,
       room: publicRoom(room),
     });
+    return true;
+  }
+
+  const passwordMatch = pathname.match(/^\/api\/rooms\/([a-z0-9-]{1,80})\/password$/);
+  if (passwordMatch && request.method === "PATCH") {
+    const code = passwordMatch[1];
+    const room = rooms.get(code);
+    const token = request.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
+    if (jitsiAuthMode !== "token" || !room || Date.parse(room.expiresAt) <= Date.now() ||
+        !token || !/^[a-f0-9]{64}$/.test(room.ownerTokenHash ?? "") ||
+        !timingSafeEqual(ownerDigest(token), Buffer.from(room.ownerTokenHash, "hex"))) {
+      json(response, 403, localizedError(request,
+        "Only this room's creator can change its password.",
+        "Сменить пароль может только создатель этой комнаты."));
+      return true;
+    }
+    const address = clientIp(request, trustProxy);
+    if (!rateLimit(request, response, passwordRateLimiter, `change:${address}:${code}`)) return true;
+    let body;
+    try {
+      body = await readJsonBody(request);
+    } catch (error) {
+      json(response, error.message === "request-too-large" ? 413 : 400,
+        localizedError(request, "Invalid password change request.", "Некорректный запрос на смену пароля."));
+      return true;
+    }
+    if (typeof body?.password !== "string" || body.password.length > 200) {
+      json(response, 400, localizedError(request,
+        "The password must be a string of at most 200 characters.", "Пароль должен содержать не более 200 символов."));
+      return true;
+    }
+    let fields;
+    try {
+      fields = await passwordFields(body.password);
+    } catch (error) {
+      if (!(error instanceof CapacityError)) throw error;
+      scryptBusy(request, response);
+      return true;
+    }
+    const updated = { ...room, ...fields };
+    if (Date.parse(room.expiresAt) <= Date.now() || !await persistRooms({ previous:room, updated })) {
+      json(response, 409, localizedError(request,
+        "The room changed while saving. Please try again.", "Комната изменилась при сохранении. Попробуйте ещё раз."));
+      return true;
+    }
+    json(response, 200, { room:publicRoom(updated) });
     return true;
   }
 
@@ -706,6 +772,12 @@ async function handleApi(request, response, pathname) {
       }
 
       throw error;
+    }
+
+    if (rooms.get(code) !== room) {
+      json(response, 409, localizedError(request,
+        "The room password changed. Please try joining again.", "Пароль комнаты изменился. Попробуйте войти ещё раз."));
+      return true;
     }
 
     if (!passwordAccepted) {
