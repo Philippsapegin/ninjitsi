@@ -19,6 +19,7 @@ interface CallControlsProps {
   isScreenShareBusy: boolean;
   isScreenSharing: boolean;
   isVideoBusy: boolean;
+  isVideoStarting: boolean;
   isVideoMuted: boolean;
   onHangup: () => void;
   onToggleAudio: () => void;
@@ -103,6 +104,7 @@ export function CallControls({
   isScreenShareBusy,
   isScreenSharing,
   isVideoBusy,
+  isVideoStarting,
   isVideoMuted,
   onHangup,
   onToggleAudio,
@@ -143,9 +145,11 @@ export function CallControls({
           )}
         </ControlButton>
         <ControlButton
-          disabled={isVideoBusy}
+          disabled={isVideoBusy && !isVideoStarting}
           label={
-            isVideoBusy
+            isVideoStarting
+              ? tr("Cancel camera start", "Отменить включение камеры")
+              : isVideoBusy
               ? tr("Connecting camera", "Подключаем камеру")
               : isVideoMuted
                 ? tr("Turn camera on", "Включить камеру")

@@ -17,6 +17,7 @@ import {
 } from "./mediaPreferences";
 import { isNoiseSuppressionSupported } from "./noiseSuppression";
 import { createLocalTrack, isMediaPermissionError } from "./mediaDevices";
+import { CameraOperations } from "./cameraOperations";
 import {
   applyReceiveVideoPolicy,
   CAMERA_OFF_PROPERTY,
@@ -66,6 +67,7 @@ interface ConferenceController {
   isScreenShareBusy: boolean;
   isScreenSharing: boolean;
   isVideoBusy: boolean;
+  isVideoStarting: boolean;
   isVideoMuted: boolean;
   localAudioLevel: number;
   noiseSuppressionEnabled: boolean;
@@ -842,6 +844,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const [isAudioBusy, setIsAudioBusy] = useState(false);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoBusy, setIsVideoBusy] = useState(false);
+  const [isVideoStarting, setIsVideoStarting] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isScreenShareBusy, setIsScreenShareBusy] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -889,6 +892,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const audioCommandRef = useRef(Promise.resolve());
   const participantSessionsRef = useRef(new Map<string, number>());
   const videoBusyRef = useRef(false);
+  const [cameraOperations] = useState(() => new CameraOperations());
+  const cameraDisposals = useRef(new WeakMap<JitsiTrackLike, Promise<void>>());
+  const cameraStartRef = useRef<AbortController | null>(null);
+  const cameraSetupRef = useRef<AbortController | null>(null);
   const cameraOffIntentRef = useRef(false);
   const publishedCameraOffRef = useRef<boolean | null>(null);
   const screenShareBusyRef = useRef(false);
@@ -1312,8 +1319,44 @@ export function useJitsiConference(roomName: string): ConferenceController {
     };
   }, [syncVideoTracks]);
 
+  const disposeCamera = useCallback((track: JitsiTrackLike, conference?: JitsiConferenceLike) => {
+    const pending = cameraDisposals.current.get(track);
+    if (pending) return pending;
+    const release = (async () => {
+      try {
+        if (conference) await conference.removeTrack(track);
+      } finally {
+        try {
+          await track.dispose();
+        } finally {
+          cameraOperations.deferOpening();
+        }
+      }
+    })();
+    cameraDisposals.current.set(track, release);
+    void release.catch(() => cameraDisposals.current.delete(track));
+    return release;
+  }, [cameraOperations]);
+
+  const acquireCamera = useCallback(async (library: JitsiMeetJSLibrary, deviceId: string, signal?: AbortSignal) => {
+    if (!await cameraOperations.waitToOpen(signal) || signal?.aborted) return;
+    try {
+      const track = await createLocalTrack(library, "video", deviceId);
+      if (!signal?.aborted) return track;
+      await disposeCamera(track);
+    } catch (error) {
+      cameraOperations.deferOpening();
+      throw error;
+    }
+  }, [cameraOperations, disposeCamera]);
+
   const teardown = useCallback(async () => {
     disposedRef.current = true;
+    cameraSetupRef.current?.abort();
+    cameraSetupRef.current = null;
+    cameraStartRef.current?.abort();
+    cameraStartRef.current = null;
+    setIsVideoStarting(false);
     for (const { cleanup } of videoTrackListenersRef.current.values()) cleanup();
     videoTrackListenersRef.current.clear();
     for (const timer of videoRecoveryTimersRef.current.values()) window.clearTimeout(timer);
@@ -1342,6 +1385,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
       await Promise.allSettled(
         tracks.map(async (track) => {
+          if (track.getType() === "video" && track.getVideoType?.() !== "desktop") {
+            await disposeCamera(track, conference).catch(() => undefined);
+            return;
+          }
           await conference.removeTrack(track).catch(() => undefined);
           await track.dispose().catch(() => undefined);
         }),
@@ -1350,7 +1397,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     }
 
     connection?.disconnect();
-  }, [setMediaBusy]);
+  }, [disposeCamera, setMediaBusy]);
 
   const scheduleFullReconnect = useCallback(
     async () => {
@@ -1372,10 +1419,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
           track.getVideoType?.() !== "desktop",
       );
 
-      if (currentTracks.length > 0) {
+      if (currentTracks.length > 0 || cameraOffIntentRef.current) {
         lastJoinOptionsRef.current = {
           ...lastJoinOptionsRef.current,
-          startAudioMuted: !currentAudio || currentAudio.isMuted(),
+          startAudioMuted: currentTracks.length > 0
+            ? !currentAudio || currentAudio.isMuted()
+            : lastJoinOptionsRef.current.startAudioMuted,
           startVideoMuted: cameraOffIntentRef.current || !currentCamera || currentCamera.isMuted(),
         };
       }
@@ -1510,32 +1559,21 @@ export function useJitsiConference(roomName: string): ConferenceController {
         setIsAudioMuted(startAudioMuted);
         setIsVideoMuted(options.startVideoMuted);
         setMediaBusy("audio", true);
-        setMediaBusy("video", true);
+        setMediaBusy("video", !options.startVideoMuted);
 
+        const initialCamera = new AbortController();
+        cameraSetupRef.current = initialCamera;
+        const initialDevices = options.startVideoMuted ? ["audio"] as const : ["audio", "video"] as const;
         const initialTracksPromise = Promise.all(
-          (
-            [
-              {
-                device: "audio",
-                startMuted: startAudioMuted,
-              },
-              {
-                device: "video",
-                startMuted: options.startVideoMuted,
-              },
-            ] as const
-          ).map(async ({ device, startMuted }) => {
+          initialDevices.map(async device => {
             try {
-              const deviceId =
-                device === "audio"
-                  ? preferences.audioInputId
-                  : preferences.videoInputId;
               const track = device === "audio"
-                ? await createConfiguredAudioTrack(library, deviceId)
-                : await createLocalTrack(library, device, deviceId);
+                ? await createConfiguredAudioTrack(library, preferences.audioInputId)
+                : await cameraOperations.run(() => acquireCamera(library, preferences.videoInputId, initialCamera.signal));
+              if (!track) return null;
 
               try {
-                if (startMuted) await track.mute();
+                if (device === "audio" && startAudioMuted) await track.mute();
               } catch (error) {
                 await track.dispose().catch(() => undefined);
                 throw error;
@@ -1551,6 +1589,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
             }
           }),
         );
+        const disposeInitialTrack = (device: "audio" | "video", track: JitsiTrackLike) =>
+          device === "video" ? disposeCamera(track) : track.dispose();
         let initialTracksClaimed = false;
 
         discardInitialTracks = () => {
@@ -1559,10 +1599,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
           }
 
           initialTracksClaimed = true;
+          initialCamera.abort();
           void initialTracksPromise.then(async (results) => {
             await Promise.allSettled(
               results.flatMap((result) =>
-                result.ok ? [result.track.dispose()] : [],
+                result?.ok ? [disposeInitialTrack(result.device, result.track)] : [],
               ),
             );
             setMediaBusy("audio", false);
@@ -2249,6 +2290,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
             conference.join(options.password);
 
             void initialTracksPromise.then(async (results) => {
+              if (cameraSetupRef.current === initialCamera) cameraSetupRef.current = null;
               const isCurrentConference =
                 !disposedRef.current &&
                 conferenceRef.current === conference;
@@ -2256,7 +2298,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
               if (!isCurrentConference) {
                 await Promise.allSettled(
                   results.flatMap((result) =>
-                    result.ok ? [result.track.dispose()] : [],
+                    result?.ok ? [disposeInitialTrack(result.device, result.track)] : [],
                   ),
                 );
                 setMediaBusy("audio", false);
@@ -2267,6 +2309,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
               const failures: string[] = [];
 
               for (const result of results) {
+                if (!result) continue;
                 if (!result.ok) {
                   failures.push(
                     mediaErrorMessage(result.device, result.error),
@@ -2278,7 +2321,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 try {
                   await conference.addTrack(result.track);
                 } catch (publishError) {
-                  await result.track.dispose().catch(() => undefined);
+                  await disposeInitialTrack(result.device, result.track).catch(() => undefined);
                   failures.push(
                     mediaErrorMessage(result.device, publishError),
                   );
@@ -2380,7 +2423,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
       }
     },
     [
+      acquireCamera,
+      cameraOperations,
       createConfiguredAudioTrack,
+      disposeCamera,
       isDemo,
       roomName,
       syncVideoTracks,
@@ -2516,6 +2562,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
       return;
     }
 
+    if (cameraStartRef.current) {
+      cameraStartRef.current.abort();
+      setIsVideoStarting(false);
+      return;
+    }
     if (videoBusyRef.current) {
       return;
     }
@@ -2530,57 +2581,49 @@ export function useJitsiConference(roomName: string): ConferenceController {
     setError(null);
     setMediaBusy("video", true);
     const isCurrent = () => !disposedRef.current && conferenceRef.current === conference;
-
+    const oldCamera = conference.getLocalTracks("video")
+      .find(track => track.getVideoType?.() !== "desktop");
+    const turningOff = !isCameraOff(oldCamera, cameraOffIntentRef.current);
+    const start = turningOff ? null : new AbortController();
+    cameraOffIntentRef.current = true;
+    if (start) {
+      cameraStartRef.current = start;
+      setIsVideoStarting(true);
+    }
     try {
-      const currentTrack = conference
-        .getLocalTracks("video")
-        .find((candidate) => candidate.getVideoType?.() !== "desktop");
+      syncParticipants();
+      await cameraOperations.run(async () => {
+        if (!isCurrent() || start?.signal.aborted) return;
+        if (oldCamera) await disposeCamera(oldCamera, conference);
+        if (!start || !isCurrent()) return;
+        const track = await acquireCamera(library, videoInputIdRef.current, start.signal);
+        if (!track) return;
 
-      if (currentTrack && !cameraOffIntentRef.current && !isCameraOff(currentTrack)) {
-        await currentTrack.mute();
-        if (isCurrent()) cameraOffIntentRef.current = true;
-        return;
-      }
-
-      if (currentTrack) {
+        let published = false;
         try {
-          // Jitsi can resume a camera it stopped intentionally by acquiring a new native track.
-          await currentTrack.unmute();
-          if (!isCurrent()) return;
-          if (!isTrackEnded(currentTrack) && !currentTrack.isMuted()) {
-            cameraOffIntentRef.current = false;
-            return;
-          }
-        } catch (error) {
-          if (!isCurrent() || isMediaPermissionError(error)) throw error;
-          console.warn("Ninjitsi: could not resume camera track; replacing it", error);
-        }
-        // Release the failed track before opening the camera again.
-        await conference.removeTrack(currentTrack);
-        await currentTrack.dispose();
-      }
-
-      if (!isCurrent()) return;
-      const newTrack = await createLocalTrack(library, "video", videoInputIdRef.current);
-      let published = false;
-      try {
-        if (isCurrent()) {
-          await conference.addTrack(newTrack);
+          if (!isCurrent() || start.signal.aborted) return;
+          cameraStartRef.current = null;
+          setIsVideoStarting(false);
+          await conference.addTrack(track);
           published = isCurrent();
           if (published) cameraOffIntentRef.current = false;
+        } finally {
+          if (!published) await disposeCamera(track).catch(() => undefined);
         }
-      } finally {
-        if (!published) await newTrack.dispose().catch(() => undefined);
-      }
+      });
     } catch (caughtError) {
-      if (isCurrent()) setError(mediaErrorMessage("video", caughtError));
+      if (isCurrent() && !start?.signal.aborted) {
+        setError(mediaErrorMessage("video", caughtError));
+      }
     } finally {
       if (isCurrent()) {
+        cameraStartRef.current = null;
+        setIsVideoStarting(false);
         setMediaBusy("video", false);
         syncVideoTracks();
       }
     }
-  }, [isDemo, setMediaBusy, syncVideoTracks]);
+  }, [acquireCamera, cameraOperations, disposeCamera, isDemo, setMediaBusy, syncParticipants, syncVideoTracks]);
 
   const stopScreenShare = useCallback(async (conference: JitsiConferenceLike, desktop: JitsiTrackLike) => {
     if (desktopRemovalRef.current.has(desktop)) return;
@@ -2734,22 +2777,25 @@ export function useJitsiConference(roomName: string): ConferenceController {
         return;
       }
 
+      const oldTrack = conference.getLocalTracks(device).find(
+        track => device === "audio" || track.getVideoType?.() !== "desktop",
+      );
+      // Choosing a camera while it is off only saves the selection.
+      if (device === "video" && isCameraOff(oldTrack, cameraOffIntentRef.current)) return;
+
       setError(null);
       setIsDeviceSwitchBusy(true);
       setMediaBusy(device, true);
       const isCurrent = () => !disposedRef.current && conferenceRef.current === conference;
+      const cameraSetup = device === "video" ? new AbortController() : null;
+      if (cameraSetup) cameraSetupRef.current = cameraSetup;
 
-      try {
-        const oldTrack = conference
-          .getLocalTracks(device)
-          .find(
-            (candidate) =>
-              device === "audio" ||
-              candidate.getVideoType?.() !== "desktop",
-          );
+      const updateTrack = async () => {
+        if (!isCurrent()) return;
         const newTrack = device === "audio"
           ? await createConfiguredAudioTrack(library, deviceId)
-          : await createLocalTrack(library, device, deviceId);
+          : await acquireCamera(library, deviceId, cameraSetup?.signal);
+        if (!newTrack) return;
 
         let published = false;
         try {
@@ -2773,13 +2819,24 @@ export function useJitsiConference(roomName: string): ConferenceController {
           }
           published = isCurrent();
         } finally {
-          if (!published) await newTrack.dispose().catch(() => undefined);
+          if (!published) {
+            const disposal = device === "video" ? disposeCamera(newTrack) : newTrack.dispose();
+            await disposal.catch(() => undefined);
+          }
         }
 
-        await oldTrack?.dispose().catch(() => undefined);
+        if (oldTrack) {
+          const disposal = device === "video" ? disposeCamera(oldTrack) : oldTrack.dispose();
+          await disposal.catch(() => undefined);
+        }
+      };
+      try {
+        if (device === "video") await cameraOperations.run(updateTrack);
+        else await updateTrack();
       } catch (caughtError) {
         if (isCurrent()) setError(mediaErrorMessage(device, caughtError));
       } finally {
+        if (cameraSetupRef.current === cameraSetup) cameraSetupRef.current = null;
         if (isCurrent()) {
           setMediaBusy(device, false);
           setIsDeviceSwitchBusy(false);
@@ -2789,7 +2846,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
       }
     },
     [
+      acquireCamera,
+      cameraOperations,
       createConfiguredAudioTrack,
+      disposeCamera,
       isDemo,
       persistMediaPreferences,
       setMediaBusy,
@@ -3391,6 +3451,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     isScreenShareBusy,
     isScreenSharing,
     isVideoBusy,
+    isVideoStarting,
     isVideoMuted,
     localAudioLevel,
     noiseSuppressionEnabled,

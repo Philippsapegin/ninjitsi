@@ -532,6 +532,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         isScreenShareBusy={conference.isScreenShareBusy}
         isScreenSharing={conference.isScreenSharing}
         isVideoBusy={conference.isVideoBusy}
+        isVideoStarting={conference.isVideoStarting}
         isVideoMuted={conference.isVideoMuted}
         localAudioLevel={conference.localAudioLevel}
         onHangup={() => void hangup()}

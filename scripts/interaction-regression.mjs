@@ -36,7 +36,8 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const events=new Proxy({}, {get:(_,key)=>String(key)});
     const context=new AudioContext(), destination=context.createMediaStreamDestination();
-    let current, cameraAcquisitions=0, cameraResumeAttempts=0, resumeError;
+    let current, captureError, captureDelay=0;
+    const cameraStarts=[], cameraStops=[];
     function makeTrack(type) {
       const native=type==='audio' ? destination.stream.getAudioTracks()[0].clone() :
         Object.assign(new EventTarget(),{readyState:'live',enabled:true,stop(){this.readyState='ended';}});
@@ -44,12 +45,11 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
       return { getType:()=>type, getTrack:()=>native, isLocal:()=>true, isMuted:()=>type==='video'?false:muted,
         mute:async()=>{await wait(30);muted=true;native.enabled=false;current?.emit('TRACK_MUTE_CHANGED');},
         unmute:async()=>{
-          if(type==='video')cameraResumeAttempts++;
           await wait(300);
-          if(type==='video'&&resumeError){const error=resumeError;resumeError=null;throw error;}
           muted=false;native.enabled=true;current?.emit('TRACK_MUTE_CHANGED');
         },
-        dispose:async()=>native.stop(), attach:async()=>{},detach:()=>{},getVideoType:()=>'camera' };
+        dispose:async()=>{native.stop();if(type==='video')cameraStops.push(performance.now());},
+        attach:async()=>{},detach:()=>{},getVideoType:()=>'camera' };
     }
     class Conference {
       tracks=[];handlers={};properties={};participants=[];
@@ -72,15 +72,17 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     }
     window.__NINJITSI_CONFIG__={jitsiUrl:location.origin};
     window.config={hosts:{domain:'test',muc:'conference.test'},websocket:'wss://test/xmpp'};
-    window.JitsiMeetJS={JitsiConnection:Connection,init:()=>{},createLocalTracks:async opts=>opts.devices.map(type=>{
+    window.JitsiMeetJS={JitsiConnection:Connection,init:()=>{},createLocalTracks:async opts=>Promise.all(opts.devices.map(async type=>{
         if(type==='video'){
-          cameraAcquisitions++;
+          cameraStarts.push(performance.now());
+          if(captureDelay)await wait(captureDelay);
+          if(captureError){const error=captureError;captureError=null;throw error;}
           if(current?.getLocalTracks('video').some(track=>track.getTrack().readyState==='ended')){
             throw new Error('Old camera still attached');
           }
         }
         return makeTrack(type);
-      }),
+      })),
       events:{conference:events,connection:events,track:events,connectionQuality:events,e2eping:events}};
     for(const id of ['ninjitsi-config','ninjitsi-lib-jitsi-meet']){
       const s=document.createElement('script');s.id=id;s.dataset.loaded='true';document.head.append(s);
@@ -96,11 +98,11 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
         endMic:()=>{current.getLocalTracks('audio')[0].getTrack().stop();current.emit('TRACK_MUTE_CHANGED');},
         microphoneMuted:()=>current.properties.ninjitsiMicrophoneMuted,
         cameraOff:()=>current.properties[CAMERA_OFF_PROPERTY],
-        cameraStats:()=>({acquisitions:cameraAcquisitions,attempts:cameraResumeAttempts,
+        cameraStats:()=>({starts:cameraStarts,stops:cameraStops,
           tracks:current.getLocalTracks('video').map(track=>track.getTrack().readyState)}),
         endCamera:()=>{current.getLocalTracks('video')[0].getTrack().stop();current.emit('TRACK_MUTE_CHANGED');},
-        failCameraResume:(permission)=>{resumeError=permission?
-          {name:'gum.failed',gum:{error:new DOMException('Permission denied','NotAllowedError')}}:new Error('Video sender is detached');},
+        delayCameraCapture:ms=>{captureDelay=ms;},
+        failCameraCapture:(name)=>{captureError={name:'gum.failed',gum:{error:new DOMException(name,name)}};},
         showToasts:setShowToasts,
         remoteCamera:(off)=>{
           if(!current.participants.length){
@@ -126,8 +128,8 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
         onVideoBackgroundChange={async()=>{}} roomPassword={null} status={c.status}
         videoBackgroundAvailable={false} videoBackgroundEnabled={false} videoBusy={c.isVideoBusy} videoInputId=""/>
         <CallControls isAudioBusy={c.isAudioBusy} isAudioMuted={c.isAudioMuted} localAudioLevel={0}
-        isScreenShareBusy={false} isScreenSharing={false} isVideoBusy={false} isVideoMuted={true}
-        onHangup={()=>{}} onToggleAudio={c.toggleAudio} onToggleScreenShare={()=>{}} onToggleVideo={()=>{}}
+        isScreenShareBusy={false} isScreenSharing={false} isVideoBusy={c.isVideoBusy} isVideoStarting={c.isVideoStarting} isVideoMuted={c.isVideoMuted}
+        onHangup={()=>{}} onToggleAudio={c.toggleAudio} onToggleScreenShare={()=>{}} onToggleVideo={c.toggleVideo}
         pushToTalkEnabled={ptt.enabled} pushToTalkPressed={ptt.pressed} onPushToTalkPress={ptt.press} onPushToTalkRelease={ptt.release}/>
         <div data-bot-messages>{bots.botMessages.map(m=><p key={m.id}>{m.senderName}: {m.text}</p>)}</div>
         {c.participants.map(p=><div key={p.id} data-testid={'tile-'+p.id}><VideoTile activationLabel="Focus" onActivate={()=>{}} onVolumeChange={()=>{}} participant={p} volume={1}/></div>)}
@@ -240,38 +242,59 @@ try {
   assert.equal(await page.evaluate(()=>window.__interaction.c.videoBackgroundEnabled),true);
   assert.equal(await page.evaluate(()=>window.__interaction.cameraOff()),"true");
 
-  const beforeRecovery=await page.evaluate(()=>window.__interaction.cameraStats());
-  await page.evaluate(async()=>{
-    const interaction=window.__interaction;
-    interaction.endCamera();
-    const requests=Array.from({length:12},()=>interaction.c.toggleVideo());
-    await Promise.all([...requests,interaction.c.setVideoInputDevice('blocked-device')]);
-  });
+  const cameraOn=page.getByRole("button",{name:"Turn camera on",exact:true});
+  const cameraOff=page.getByRole("button",{name:"Turn camera off",exact:true});
+  const cancelStart=page.getByRole("button",{name:"Cancel camera start",exact:true});
+  const cameraStats=()=>page.evaluate(()=>window.__interaction.cameraStats());
+  assert.deepEqual((await cameraStats()).starts,[],"joining with the camera off must not open the device");
+  await cameraOn.click();
   await local.locator("video").waitFor();
-  assert.deepEqual(await page.evaluate(()=>window.__interaction.cameraStats()),{
-    acquisitions:beforeRecovery.acquisitions+1,attempts:beforeRecovery.attempts+1,tracks:["live"],
-  },"rapid retries must recover one ended camera with one fresh track");
+  assert.equal((await cameraStats()).starts.length,1);
+
+  await cameraOff.click();
+  await cameraOn.click();
+  await cancelStart.waitFor();
+  assert.equal((await cameraStats()).starts.length,1,"do not reopen the camera during its cooldown");
+  await cancelStart.click();
+  await cameraOn.waitFor();
+  assert.equal((await cameraStats()).starts.length,1,"cancelling the cooldown must skip capture");
+
+  await cameraOn.click();
+  await page.evaluate(()=>window.__interaction.c.setVideoInputDevice("blocked-device"));
+  await local.locator("video").waitFor();
+  const reopened=await cameraStats();
+  assert.equal(reopened.starts.length,2);
+  assert(reopened.starts.at(-1)-reopened.stops.at(-1)>=1000,"the camera must be closed for a full second");
   assert.equal(await page.evaluate(()=>window.__interaction.c.videoInputId),"");
 
-  await page.evaluate(async()=>{
-    const interaction=window.__interaction;
-    await interaction.c.toggleVideo();
-    interaction.failCameraResume(false);
-    await interaction.c.toggleVideo();
-  });
+  await page.evaluate(()=>window.__interaction.endCamera());
+  await cameraOn.click();
   await local.locator("video").waitFor();
-  assert.equal(await page.evaluate(()=>window.__interaction.cameraStats().acquisitions),beforeRecovery.acquisitions+2);
+  assert.deepEqual((await cameraStats()).tracks,["live"]);
 
-  await page.evaluate(async()=>{
-    const interaction=window.__interaction;
-    await interaction.c.toggleVideo();
-    interaction.failCameraResume(true);
-    await interaction.c.toggleVideo();
-  });
+  await cameraOff.click();
+  await page.evaluate(()=>window.__interaction.delayCameraCapture(300));
+  await cameraOn.click();
+  await page.waitForFunction(()=>window.__interaction.cameraStats().starts.length===4);
+  await cancelStart.click();
+  await cameraOn.waitFor();
+  const cancelled=await cameraStats();
+  assert.deepEqual(cancelled.tracks,[],"a camera returned after cancel must be disposed before publication");
+  assert.equal(cancelled.stops.length,4);
+  await page.evaluate(()=>window.__interaction.delayCameraCapture(0));
+
+  await page.evaluate(()=>window.__interaction.failCameraCapture("AbortError"));
+  await cameraOn.click();
+  await cameraOn.waitFor();
+  assert.equal((await cameraStats()).starts.length,5,"a failed opening must not retry automatically");
+
+  await page.evaluate(()=>window.__interaction.failCameraCapture("NotAllowedError"));
+  await cameraOn.click();
   const cameraToast=page.getByRole("button",{name:/permission to use the camera.*Dismiss notification/});
   await cameraToast.waitFor();
-  assert.equal(await page.evaluate(()=>window.__interaction.cameraStats().acquisitions),beforeRecovery.acquisitions+2,
-    "permission denial must not trigger another capture");
+  const failures=await cameraStats();
+  assert.equal(failures.starts.length,6,"permission denial must not trigger another capture");
+  assert(failures.starts.at(-1)-failures.starts.at(-2)>=1000,"a new request must wait after a failed opening");
   await cameraToast.click();
   await cameraToast.waitFor({state:"hidden"});
   assert.ok(await page.evaluate(()=>window.__interaction.c.error));
