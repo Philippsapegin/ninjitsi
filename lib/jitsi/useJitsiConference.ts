@@ -19,6 +19,8 @@ import { isNoiseSuppressionSupported } from "./noiseSuppression";
 import { createLocalTrack, isMediaPermissionError } from "./mediaDevices";
 import {
   applyReceiveVideoPolicy,
+  CAMERA_OFF_PROPERTY,
+  isCameraOff,
   isTrackEnded,
   pickPreferredVideo,
   SCREEN_SHARING_PROPERTY,
@@ -880,6 +882,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const audioCommandRef = useRef(Promise.resolve());
   const participantSessionsRef = useRef(new Map<string, number>());
   const videoBusyRef = useRef(false);
+  const cameraOffIntentRef = useRef(false);
+  const publishedCameraOffRef = useRef<boolean | null>(null);
   const screenShareBusyRef = useRef(false);
   const audioMeterRef = useRef<{
     nativeTrack: MediaStreamTrack;
@@ -1111,6 +1115,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
         const receivedBackground = remoteVideoBackgroundsRef.current.get(
           participant.getId(),
         );
+        const isScreenSharing = videoTrack?.getVideoType?.() === "desktop";
+        const cameraOff = participant.getProperty?.(CAMERA_OFF_PROPERTY);
 
         return {
           audioMuted: participant.isAudioMuted(),
@@ -1127,7 +1133,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
             participant.getId() === dominantSpeakerRef.current,
           isLocal: false,
           isModerator: participant.getRole() === "moderator",
-          isScreenSharing: videoTrack?.getVideoType?.() === "desktop",
+          isScreenSharing,
           tileColor: normalizeProfileTileColor(
             participant.getProperty?.(TILE_COLOR_PROPERTY),
           ),
@@ -1137,7 +1143,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
             receivedBackground?.revision === videoBackgroundRevision
               ? receivedBackground.dataUrl
               : undefined,
-          videoMuted: !videoTrack || videoTrack.isMuted(),
+          videoMuted: isScreenSharing
+            ? videoTrack.isMuted()
+            : isCameraOff(videoTrack, cameraOff === "true" ||
+                (cameraOff === undefined && participant.isVideoMuted())),
           videoTrack,
         };
       });
@@ -1151,8 +1160,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         track.getType() === "video" &&
         track.getVideoType?.() !== "desktop",
     );
-    const videoMuted =
-      cameraTracks.length === 0 || cameraTracks.every((track) => track.isMuted() || isTrackEnded(track));
+    const videoMuted = cameraOffIntentRef.current || cameraTracks.every((track) => isCameraOff(track));
     const sharing = localTracks.some(
       (track) =>
         track.getType() === "video" &&
@@ -1182,11 +1190,20 @@ export function useJitsiConference(roomName: string): ConferenceController {
         videoBackgroundUrl: videoBackgroundEnabledRef.current
           ? localVideoBackgroundDataRef.current
           : undefined,
-        videoMuted: localVideo ? localVideo.isMuted() : true,
+        videoMuted: localVideo?.getVideoType?.() === "desktop" ? localVideo.isMuted() : videoMuted,
         videoTrack: localVideo,
       },
       ...remote,
     ]);
+    if (publishedCameraOffRef.current !== videoMuted) {
+      publishedCameraOffRef.current = videoMuted;
+      try {
+        conference.setLocalParticipantProperty?.(CAMERA_OFF_PROPERTY, String(videoMuted));
+      } catch (error) {
+        publishedCameraOffRef.current = null;
+        console.warn("Ninjitsi: could not publish camera state", error);
+      }
+    }
   }, [watchLocalAudioLevel]);
 
   const scheduleParticipantSync = useCallback(() => {
@@ -1228,10 +1245,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
       };
       events.forEach(event => track.addEventListener?.(event, refresh));
       nativeTrack?.addEventListener("ended", refresh);
+      nativeTrack?.addEventListener("mute", refresh);
       nativeTrack?.addEventListener("unmute", refresh);
       videoTrackListenersRef.current.set(track, () => {
         events.forEach(event => track.removeEventListener?.(event, refresh));
         nativeTrack?.removeEventListener("ended", refresh);
+        nativeTrack?.removeEventListener("mute", refresh);
         nativeTrack?.removeEventListener("unmute", refresh);
       });
     }
@@ -1338,7 +1357,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
         lastJoinOptionsRef.current = {
           ...lastJoinOptionsRef.current,
           startAudioMuted: !currentAudio || currentAudio.isMuted(),
-          startVideoMuted: !currentCamera || currentCamera.isMuted(),
+          startVideoMuted: cameraOffIntentRef.current || !currentCamera || currentCamera.isMuted(),
         };
       }
       reconnectInProgressRef.current = true;
@@ -1381,6 +1400,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
       localNameRef.current = options.displayName;
       localAvatarRef.current = options.avatarDataUrl;
       localTileColorRef.current = normalizeProfileTileColor(options.tileColor);
+      cameraOffIntentRef.current = options.startVideoMuted;
+      publishedCameraOffRef.current = null;
       localVideoBackgroundDataRef.current =
         options.videoBackgroundDataUrl || "";
       localVideoBackgroundRevisionRef.current =
@@ -2011,17 +2032,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
                         dataUrl,
                         revision: transfer.revision,
                       });
-                      setParticipants((current) =>
-                        current.map((participant) =>
-                          participant.id === senderId &&
-                          participant.videoBackgroundEnabled
-                            ? {
-                                ...participant,
-                                videoBackgroundUrl: dataUrl,
-                              }
-                            : participant,
-                        ),
-                      );
+                      syncParticipants();
                     }
 
                     return;
@@ -2488,10 +2499,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
         .find((candidate) => candidate.getVideoType?.() !== "desktop");
 
       if (currentTrack) {
-        if (currentTrack.isMuted()) {
-          await currentTrack.unmute();
-        } else {
-          await currentTrack.mute();
+        const nextCameraOff = !(cameraOffIntentRef.current || isCameraOff(currentTrack));
+        if (nextCameraOff) await currentTrack.mute();
+        else await currentTrack.unmute();
+        if (conferenceRef.current === conference) {
+          cameraOffIntentRef.current = nextCameraOff;
         }
       } else {
         const newTrack = await createLocalTrack(
@@ -2510,6 +2522,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
         try {
           await conference.addTrack(newTrack);
+          if (conferenceRef.current === conference) {
+            cameraOffIntentRef.current = false;
+          }
         } catch (publishError) {
           await newTrack.dispose().catch(() => undefined);
           throw publishError;
@@ -2690,7 +2705,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
           ? await createConfiguredAudioTrack(library, deviceId)
           : await createLocalTrack(library, device, deviceId);
 
-        if (oldTrack?.isMuted() || (device === "audio" && audioIntentRef.current === true)) {
+        if (oldTrack?.isMuted() ||
+            (device === "audio" && audioIntentRef.current === true) ||
+            (device === "video" && cameraOffIntentRef.current)) {
           await newTrack.mute();
         }
 
@@ -2939,11 +2956,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
         return;
       }
 
+      syncParticipants();
       conference.setLocalParticipantProperty?.(
         VIDEO_BACKGROUND_ENABLED_PROPERTY,
         enabled ? "true" : "false",
       );
-      syncParticipants();
 
       if (
         enabled &&

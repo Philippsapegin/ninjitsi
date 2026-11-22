@@ -1,10 +1,17 @@
 import type { JitsiConferenceLike, JitsiTrackLike } from "./types";
 
 export const SCREEN_SHARING_PROPERTY = "ninjitsiScreenSharing";
+export const CAMERA_OFF_PROPERTY = "ninjitsiCameraOff";
 export const VIDEO_RECOVERY_EVENT = "ninjitsi:recover-video";
 
 export function isTrackEnded(track: JitsiTrackLike) {
   return track.getTrack?.()?.readyState === "ended";
+}
+
+export function isCameraOff(track: JitsiTrackLike | undefined, reportedOff = false) {
+  const native = track?.isLocal?.() === true ? track.getTrack?.() : undefined;
+  return reportedOff || !track || track.isMuted() || isTrackEnded(track) ||
+    native?.enabled === false || native?.muted === true;
 }
 
 export function pickPreferredVideo(tracks: JitsiTrackLike[], screenSharing?: boolean | string) {
