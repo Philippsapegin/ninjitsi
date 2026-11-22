@@ -27,7 +27,11 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     import {usePushToTalk} from './hooks/usePushToTalk';
     import {useBotChat} from './hooks/useBotChat';
     import {CallControls} from './components/meeting/CallControls';
+    import {ChatSidebar} from './components/meeting/ChatSidebar';
     import {SettingsPanel} from './components/meeting/SettingsPanel';
+    import {VideoTile} from './components/meeting/VideoTile';
+    import {CAMERA_OFF_PROPERTY} from './lib/jitsi/videoPolicy';
+    const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jO1sAAAAASUVORK5CYII=';
     const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const events=new Proxy({}, {get:(_,key)=>String(key)});
     const context=new AudioContext(), destination=context.createMediaStreamDestination();
@@ -35,19 +39,19 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     function makeTrack(type) {
       const native=type==='audio' ? destination.stream.getAudioTracks()[0].clone() : undefined;
       let muted=false;
-      return { getType:()=>type, getTrack:()=>native, isMuted:()=>muted,
+      return { getType:()=>type, getTrack:()=>native, isMuted:()=>type==='video'?false:muted,
         mute:async()=>{await wait(30);muted=true;if(native)native.enabled=false;current?.emit('TRACK_MUTE_CHANGED');},
         unmute:async()=>{await wait(300);muted=false;if(native)native.enabled=true;current?.emit('TRACK_MUTE_CHANGED');},
         dispose:async()=>native?.stop(), attach:async()=>{},detach:()=>{},getVideoType:()=>'camera' };
     }
     class Conference {
-      tracks=[];handlers={};
+      tracks=[];handlers={};properties={};participants=[];
       constructor(){current=this;}
       on=(e,fn)=>{(this.handlers[e]??=[]).push(fn);};
       emit=(e,...args)=>this.handlers[e]?.forEach(fn=>fn(...args));
       getLocalTracks=(type)=>this.tracks.filter(t=>!type || t.getType()===type);
-      getParticipants=()=>[];isModerator=()=>false;myUserId=()=>'local';
-      setDisplayName=()=>{};setLocalParticipantProperty=()=>{};setReceiverConstraints=()=>{};
+      getParticipants=()=>this.participants;isModerator=()=>false;myUserId=()=>'local';
+      setDisplayName=()=>{};setLocalParticipantProperty=(key,value)=>{this.properties[key]=value;};setReceiverConstraints=()=>{};
       join=()=>queueMicrotask(()=>this.emit('CONFERENCE_JOINED'));
       leave=async()=>{};sendTextMessage=()=>{};
       addTrack=async track=>{this.tracks.push(track);this.emit('TRACK_ADDED',track);};
@@ -74,8 +78,24 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
       window.__interaction={c,ptt,send:message=>setMessages(old=>[...old,message]),
         native:()=>current?.getLocalTracks('audio')[0]?.getTrack(),
         endMic:()=>{current.getLocalTracks('audio')[0].getTrack().stop();current.emit('TRACK_MUTE_CHANGED');},
+        cameraOff:()=>current.properties[CAMERA_OFF_PROPERTY],
+        remoteCamera:(off)=>{
+          if(!current.participants.length){
+            const track=makeTrack('video');
+            const properties={ninjitsiVideoBackgroundEnabled:'true',ninjitsiVideoBackgroundRevision:'remote-test'};
+            current.participants.push({properties,getProperty:key=>properties[key],getId:()=>'remote',
+              getTracks:()=>[track],getDisplayName:()=>'Remote',getRole:()=>'participant',
+              isAudioMuted:()=>true,isVideoMuted:()=>false});
+            const packet={type:'ninjitsi.video-background.v1',revision:'remote-test'};
+            for(const part of [{kind:'start',totalChunks:1},{kind:'chunk',index:0,data:image},{kind:'end'}]){
+              current.emit('ENDPOINT_MESSAGE_RECEIVED','remote',{...packet,...part});
+            }
+          }
+          current.participants[0].properties[CAMERA_OFF_PROPERTY]=String(off);
+          current.emit('PARTICIPANT_PROPERTY_CHANGED');
+        },
         join:()=>c.join({displayName:'Alice',avatarDataUrl:'',isCreator:false,password:'',profileId:'',startAudioMuted:false,
-          startVideoMuted:true,tileColor:'#abcdef',videoBackgroundDataUrl:'',videoBackgroundRevision:''})};
+          startVideoMuted:true,tileColor:'#abcdef',videoBackgroundDataUrl:image,videoBackgroundRevision:'local-test'})};
       return <><input aria-label="Chat input"/><SettingsPanel audioInputId={c.audioInputId} audioOutputId=""
         busy={c.isDeviceSwitchBusy} localAudioLevel={0} noiseSuppressionEnabled={false} noiseSuppressionSupported={false}
         onAudioInputChange={c.setAudioInputDevice} onAudioOutputChange={async()=>{}} onNoiseSuppressionChange={async()=>{}}
@@ -86,7 +106,10 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
         isScreenShareBusy={false} isScreenSharing={false} isVideoBusy={false} isVideoMuted={true}
         onHangup={()=>{}} onToggleAudio={c.toggleAudio} onToggleScreenShare={()=>{}} onToggleVideo={()=>{}}
         pushToTalkEnabled={ptt.enabled} pushToTalkPressed={ptt.pressed} onPushToTalkPress={ptt.press} onPushToTalkRelease={ptt.release}/>
-        <div data-bot-messages>{bots.botMessages.map(m=><p key={m.id}>{m.senderName}: {m.text}</p>)}</div></>;
+        <div data-bot-messages>{bots.botMessages.map(m=><p key={m.id}>{m.senderName}: {m.text}</p>)}</div>
+        {c.participants.map(p=><div key={p.id} data-testid={'tile-'+p.id}><VideoTile activationLabel="Focus" onActivate={()=>{}} onVolumeChange={()=>{}} participant={p} volume={1}/></div>)}
+        <ChatSidebar disabled={false} isSendingAttachment={false} messages={[...messages.filter(m=>!m.attachments)]}
+          participants={c.participants} onSend={()=>{}} onSendAttachment={async()=>{}}/></>;
     }
     createRoot(document.getElementById('root')).render(<I18nProvider><Harness/></I18nProvider>);
   ` },
@@ -177,8 +200,44 @@ try {
   await page.getByText("Dice: 2d20+3 = 19", { exact: true }).waitFor();
   await page.waitForTimeout(2200);
   assert.equal(await page.getByText("Dice: 2d20+3 = 19", { exact: true }).count(), 1);
+
+  // The SDK can leave a camera track present and report it unmuted.
+  const local=page.getByTestId("tile-local"), remote=page.getByTestId("tile-remote");
+  await page.evaluate(()=>window.__interaction.c.setVideoBackgroundEnabled(true));
+  await local.locator("[data-video-background]").waitFor();
+  assert.equal(await page.evaluate(()=>window.__interaction.cameraOff()),"true");
+  await page.evaluate(()=>window.__interaction.c.toggleVideo());
+  await local.locator("video").waitFor();
+  await page.evaluate(()=>window.__interaction.c.toggleVideo());
+  await local.locator("[data-video-background]").waitFor();
+  assert.equal(await page.evaluate(()=>window.__interaction.cameraOff()),"true");
+  await page.evaluate(()=>window.__interaction.remoteCamera(false));
+  await remote.locator("video").waitFor();
+  await page.evaluate(()=>window.__interaction.remoteCamera(true));
+  await remote.locator("[data-video-background]").waitFor();
+
+  const list=page.locator("[data-chat-messages]");
+  await list.evaluate(element=>Object.assign(element.style,{height:"100px",overflowY:"auto"}));
+  const appendHistory=async (from,to)=>page.evaluate(([from,to])=>{
+    for(let i=from;i<to;i++)window.__interaction.send({
+      isLocal:false,senderId:"remote",senderName:"Remote",timestamp:Date.now(),id:"history-"+i,text:"Message "+i,
+    });
+  },[from,to]);
+  await appendHistory(0,24);
+  await page.waitForFunction(()=>{const list=document.querySelector("[data-chat-messages]");return list.scrollHeight>list.clientHeight&&list.scrollTop>0;});
+  await list.evaluate(element=>{element.scrollTop=0;});
+  await page.waitForTimeout(60);
+  await page.evaluate(()=>window.__interaction.remoteCamera(false));
+  await appendHistory(24,25);
+  await page.getByText("Message 24",{exact:true}).waitFor();
+  assert.equal(await list.evaluate(element=>element.scrollTop),0,"rerenders and new messages must preserve history reading");
+  await list.evaluate(element=>{element.scrollTop=element.scrollHeight;});
+  await page.waitForTimeout(60);
+  await appendHistory(25,26);
+  await page.getByText("Message 25",{exact:true}).waitFor();
+  assert.equal(await list.evaluate(element=>element.scrollHeight-element.clientHeight-element.scrollTop),0,"the latest message is followed near the bottom");
   assert.deepEqual(errors, []);
-  console.log("Passed: PTT keyboard/pointer capture, async race, text input, blur, device replacement, ended-mic recovery, reload persistence; bot commands/replies/private isolation.");
+  console.log("Passed: PTT, bot chat isolation, camera-off backgrounds with stale SDK tracks, and chat scroll retention.");
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));
