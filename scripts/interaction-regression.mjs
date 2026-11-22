@@ -28,6 +28,7 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     import {useBotChat} from './hooks/useBotChat';
     import {CallControls} from './components/meeting/CallControls';
     import {ChatSidebar} from './components/meeting/ChatSidebar';
+    import {MeetingToasts} from './components/meeting/MeetingToasts';
     import {SettingsPanel} from './components/meeting/SettingsPanel';
     import {VideoTile} from './components/meeting/VideoTile';
     import {CAMERA_OFF_PROPERTY} from './lib/jitsi/videoPolicy';
@@ -35,14 +36,20 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
     const events=new Proxy({}, {get:(_,key)=>String(key)});
     const context=new AudioContext(), destination=context.createMediaStreamDestination();
-    let current;
+    let current, cameraAcquisitions=0, cameraResumeAttempts=0, resumeError;
     function makeTrack(type) {
-      const native=type==='audio' ? destination.stream.getAudioTracks()[0].clone() : undefined;
+      const native=type==='audio' ? destination.stream.getAudioTracks()[0].clone() :
+        Object.assign(new EventTarget(),{readyState:'live',enabled:true,stop(){this.readyState='ended';}});
       let muted=false;
-      return { getType:()=>type, getTrack:()=>native, isMuted:()=>type==='video'?false:muted,
-        mute:async()=>{await wait(30);muted=true;if(native)native.enabled=false;current?.emit('TRACK_MUTE_CHANGED');},
-        unmute:async()=>{await wait(300);muted=false;if(native)native.enabled=true;current?.emit('TRACK_MUTE_CHANGED');},
-        dispose:async()=>native?.stop(), attach:async()=>{},detach:()=>{},getVideoType:()=>'camera' };
+      return { getType:()=>type, getTrack:()=>native, isLocal:()=>true, isMuted:()=>type==='video'?false:muted,
+        mute:async()=>{await wait(30);muted=true;native.enabled=false;current?.emit('TRACK_MUTE_CHANGED');},
+        unmute:async()=>{
+          if(type==='video')cameraResumeAttempts++;
+          await wait(300);
+          if(type==='video'&&resumeError){const error=resumeError;resumeError=null;throw error;}
+          muted=false;native.enabled=true;current?.emit('TRACK_MUTE_CHANGED');
+        },
+        dispose:async()=>native.stop(), attach:async()=>{},detach:()=>{},getVideoType:()=>'camera' };
     }
     class Conference {
       tracks=[];handlers={};properties={};participants=[];
@@ -65,7 +72,15 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
     }
     window.__NINJITSI_CONFIG__={jitsiUrl:location.origin};
     window.config={hosts:{domain:'test',muc:'conference.test'},websocket:'wss://test/xmpp'};
-    window.JitsiMeetJS={JitsiConnection:Connection,init:()=>{},createLocalTracks:async opts=>opts.devices.map(makeTrack),
+    window.JitsiMeetJS={JitsiConnection:Connection,init:()=>{},createLocalTracks:async opts=>opts.devices.map(type=>{
+        if(type==='video'){
+          cameraAcquisitions++;
+          if(current?.getLocalTracks('video').some(track=>track.getTrack().readyState==='ended')){
+            throw new Error('Old camera still attached');
+          }
+        }
+        return makeTrack(type);
+      }),
       events:{conference:events,connection:events,track:events,connectionQuality:events,e2eping:events}};
     for(const id of ['ninjitsi-config','ninjitsi-lib-jitsi-meet']){
       const s=document.createElement('script');s.id=id;s.dataset.loaded='true';document.head.append(s);
@@ -74,11 +89,19 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
       const c=useJitsiConference('test-room');
       const ptt=usePushToTalk(c.setAudioMuted,c.status==='joined');
       const [messages,setMessages]=useState([]);
+      const [showToasts,setShowToasts]=useState(false);
       const bots=useBotChat('test-room',window.__EVENTS_TOKEN__,c.status==='joined',messages);
       window.__interaction={c,ptt,send:message=>setMessages(old=>[...old,message]),
         native:()=>current?.getLocalTracks('audio')[0]?.getTrack(),
         endMic:()=>{current.getLocalTracks('audio')[0].getTrack().stop();current.emit('TRACK_MUTE_CHANGED');},
+        microphoneMuted:()=>current.properties.ninjitsiMicrophoneMuted,
         cameraOff:()=>current.properties[CAMERA_OFF_PROPERTY],
+        cameraStats:()=>({acquisitions:cameraAcquisitions,attempts:cameraResumeAttempts,
+          tracks:current.getLocalTracks('video').map(track=>track.getTrack().readyState)}),
+        endCamera:()=>{current.getLocalTracks('video')[0].getTrack().stop();current.emit('TRACK_MUTE_CHANGED');},
+        failCameraResume:(permission)=>{resumeError=permission?
+          {name:'gum.failed',gum:{error:new DOMException('Permission denied','NotAllowedError')}}:new Error('Video sender is detached');},
+        showToasts:setShowToasts,
         remoteCamera:(off)=>{
           if(!current.participants.length){
             const track=makeTrack('video');
@@ -101,7 +124,7 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
         onAudioInputChange={c.setAudioInputDevice} onAudioOutputChange={async()=>{}} onNoiseSuppressionChange={async()=>{}}
         pushToTalkEnabled={ptt.enabled} onPushToTalkChange={ptt.change} onVideoInputChange={async()=>{}}
         onVideoBackgroundChange={async()=>{}} roomPassword={null} status={c.status}
-        videoBackgroundAvailable={false} videoBackgroundEnabled={false} videoInputId=""/>
+        videoBackgroundAvailable={false} videoBackgroundEnabled={false} videoBusy={c.isVideoBusy} videoInputId=""/>
         <CallControls isAudioBusy={c.isAudioBusy} isAudioMuted={c.isAudioMuted} localAudioLevel={0}
         isScreenShareBusy={false} isScreenSharing={false} isVideoBusy={false} isVideoMuted={true}
         onHangup={()=>{}} onToggleAudio={c.toggleAudio} onToggleScreenShare={()=>{}} onToggleVideo={()=>{}}
@@ -109,7 +132,9 @@ const bundle = await build({ bundle: true, platform: "browser", format: "iife", 
         <div data-bot-messages>{bots.botMessages.map(m=><p key={m.id}>{m.senderName}: {m.text}</p>)}</div>
         {c.participants.map(p=><div key={p.id} data-testid={'tile-'+p.id}><VideoTile activationLabel="Focus" onActivate={()=>{}} onVolumeChange={()=>{}} participant={p} volume={1}/></div>)}
         <ChatSidebar disabled={false} isSendingAttachment={false} messages={[...messages.filter(m=>!m.attachments)]}
-          participants={c.participants} onSend={()=>{}} onSendAttachment={async()=>{}}/></>;
+          participants={c.participants} onSend={()=>{}} onSendAttachment={async()=>{}}/>
+        <MeetingToasts conferenceError={c.error} widgetError={showToasts?'Widget request failed':undefined}
+          botUnavailable={showToasts} reconnecting={showToasts}/></>;
     }
     createRoot(document.getElementById('root')).render(<I18nProvider><Harness/></I18nProvider>);
   ` },
@@ -135,13 +160,17 @@ try {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("switch", { name: "Push-to-talk" }).click();
   await page.waitForFunction(() => window.__interaction.c.isAudioMuted);
-  await page.evaluate(() => { document.activeElement?.blur(); });
+  // Focus remains on the settings switch after enabling PTT.
   await page.keyboard.down("Space");
   await page.waitForFunction(() => !window.__interaction.c.isAudioMuted);
+  assert.equal(await page.evaluate(() => window.__interaction.native().enabled), true);
+  assert.equal(await page.evaluate(() => window.__interaction.microphoneMuted()), "false");
   await page.keyboard.up("Space");
   assert.equal(await page.evaluate(() => window.__interaction.native().enabled), false);
+  assert.equal(await page.evaluate(() => window.__interaction.microphoneMuted()), "true");
   await page.waitForFunction(() => window.__interaction.c.isAudioMuted);
-  // Key-up while slow unmute is pending must keep the native gate closed.
+  assert.equal(await page.getByRole("switch", { name: "Push-to-talk" }).getAttribute("aria-checked"), "true");
+  // A tap must leave no delayed unmute.
   await page.keyboard.down("Space");
   await page.waitForTimeout(60);
   await page.keyboard.up("Space");
@@ -152,6 +181,10 @@ try {
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
   await page.mouse.down();
   await page.waitForFunction(() => !window.__interaction.c.isAudioMuted);
+  await page.keyboard.down("Space");
+  await page.keyboard.up("Space");
+  assert.equal(await page.evaluate(() => window.__interaction.native().enabled), true,
+    "releasing Space must not interrupt a held microphone button");
   await page.mouse.move(1000, 500);
   await page.mouse.up();
   assert.equal(await page.evaluate(() => window.__interaction.native().enabled), false);
@@ -203,11 +236,48 @@ try {
 
   // The SDK can leave a camera track present and report it unmuted.
   const local=page.getByTestId("tile-local"), remote=page.getByTestId("tile-remote");
-  await page.evaluate(()=>window.__interaction.c.setVideoBackgroundEnabled(true));
   await local.locator("[data-video-background]").waitFor();
+  assert.equal(await page.evaluate(()=>window.__interaction.c.videoBackgroundEnabled),true);
   assert.equal(await page.evaluate(()=>window.__interaction.cameraOff()),"true");
+
+  const beforeRecovery=await page.evaluate(()=>window.__interaction.cameraStats());
+  await page.evaluate(async()=>{
+    const interaction=window.__interaction;
+    interaction.endCamera();
+    const requests=Array.from({length:12},()=>interaction.c.toggleVideo());
+    await Promise.all([...requests,interaction.c.setVideoInputDevice('blocked-device')]);
+  });
+  await local.locator("video").waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.__interaction.cameraStats()),{
+    acquisitions:beforeRecovery.acquisitions+1,attempts:beforeRecovery.attempts+1,tracks:["live"],
+  },"rapid retries must recover one ended camera with one fresh track");
+  assert.equal(await page.evaluate(()=>window.__interaction.c.videoInputId),"");
+
+  await page.evaluate(async()=>{
+    const interaction=window.__interaction;
+    await interaction.c.toggleVideo();
+    interaction.failCameraResume(false);
+    await interaction.c.toggleVideo();
+  });
+  await local.locator("video").waitFor();
+  assert.equal(await page.evaluate(()=>window.__interaction.cameraStats().acquisitions),beforeRecovery.acquisitions+2);
+
+  await page.evaluate(async()=>{
+    const interaction=window.__interaction;
+    await interaction.c.toggleVideo();
+    interaction.failCameraResume(true);
+    await interaction.c.toggleVideo();
+  });
+  const cameraToast=page.getByRole("button",{name:/permission to use the camera.*Dismiss notification/});
+  await cameraToast.waitFor();
+  assert.equal(await page.evaluate(()=>window.__interaction.cameraStats().acquisitions),beforeRecovery.acquisitions+2,
+    "permission denial must not trigger another capture");
+  await cameraToast.click();
+  await cameraToast.waitFor({state:"hidden"});
+  assert.ok(await page.evaluate(()=>window.__interaction.c.error));
   await page.evaluate(()=>window.__interaction.c.toggleVideo());
   await local.locator("video").waitFor();
+
   await page.evaluate(()=>window.__interaction.c.toggleVideo());
   await local.locator("[data-video-background]").waitFor();
   assert.equal(await page.evaluate(()=>window.__interaction.cameraOff()),"true");
@@ -236,8 +306,24 @@ try {
   await appendHistory(25,26);
   await page.getByText("Message 25",{exact:true}).waitFor();
   assert.equal(await list.evaluate(element=>element.scrollHeight-element.clientHeight-element.scrollTop),0,"the latest message is followed near the bottom");
+  await page.clock.install();
+  await page.evaluate(()=>window.__interaction.showToasts(true));
+  const widgetToast=page.getByRole("button",{name:/Widget request failed.*Dismiss notification/});
+  const botToast=page.getByRole("button",{name:/Bot connection unavailable.*Dismiss notification/});
+  const reconnectToast=page.getByRole("button",{name:/Connection interrupted.*Dismiss notification/});
+  for(const toast of [widgetToast,botToast,reconnectToast])await toast.waitFor();
+  await widgetToast.click();
+  await widgetToast.waitFor({state:"hidden"});
+  await page.clock.fastForward(6100);
+  await botToast.waitFor({state:"hidden"});
+  await reconnectToast.waitFor({state:"hidden"});
+  assert.equal(await widgetToast.count(),0,"the dismissed warning stays hidden while its cause persists");
+  await page.evaluate(()=>window.__interaction.showToasts(false));
+  await page.waitForTimeout(50);
+  await page.evaluate(()=>window.__interaction.showToasts(true));
+  await widgetToast.waitFor();
   assert.deepEqual(errors, []);
-  console.log("Passed: PTT, bot chat isolation, camera-off backgrounds with stale SDK tracks, and chat scroll retention.");
+  console.log("Passed: PTT, bot chat isolation, camera-off backgrounds, camera recovery and permission denial, chat scroll retention, and timed/dismissible toasts.");
 } finally {
   await browser.close();
   await new Promise(resolve => server.close(resolve));

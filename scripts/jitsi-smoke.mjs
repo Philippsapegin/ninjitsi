@@ -420,9 +420,8 @@ try {
   });
 
   await soloProfileBackground.waitFor();
-  await soloProfileBackground.click();
   if ((await soloProfileBackground.getAttribute("aria-checked")) !== "true") {
-    throw new Error("Видеофон не включился в комнате без других участников");
+    throw new Error("Видеофон должен быть включён при входе в комнату");
   }
   if (
     (await page.getByText(

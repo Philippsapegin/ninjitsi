@@ -90,7 +90,7 @@ interface ConferenceController {
   participants: ParticipantView[];
   status: MeetingStatus;
   toggleAudio: () => Promise<void>;
-  setAudioMuted: (muted: boolean) => Promise<void>;
+  setAudioMuted: (muted: boolean, pushToTalk?: boolean) => Promise<void>;
   readAudioReceiverStats: (track: MediaStreamTrack) => Promise<RTCStatsReport | undefined>;
   toggleScreenShare: () => Promise<void>;
   toggleVideo: () => Promise<void>;
@@ -106,6 +106,7 @@ const PING_MESSAGE_PREFIX = "__ninjitsi_ping_v1__:";
 const PRIVATE_CHAT_MESSAGE_TYPE = "ninjitsi.private-chat.v1";
 const VIDEO_BACKGROUND_MESSAGE_TYPE = "ninjitsi.video-background.v1";
 const VIDEO_BACKGROUND_ENABLED_PROPERTY = "ninjitsiVideoBackgroundEnabled";
+const MICROPHONE_MUTED_PROPERTY = "ninjitsiMicrophoneMuted";
 const VIDEO_BACKGROUND_REVISION_PROPERTY = "ninjitsiVideoBackgroundRevision";
 const TILE_COLOR_PROPERTY = "ninjitsiTileColor";
 const ATTACHMENT_CHUNK_SIZE = 12_000;
@@ -741,6 +742,7 @@ function mediaErrorMessage(device: LocalMediaDevice, caughtError: unknown) {
   const target = mediaName(device);
 
   if (
+    isMediaPermissionError(caughtError) ||
     normalized.includes("permission") ||
     normalized.includes("notallowed") ||
     normalized.includes("denied")
@@ -874,11 +876,16 @@ export function useJitsiConference(roomName: string): ConferenceController {
   const dominantSpeakerRef = useRef<string | null>(null);
   const disposedRef = useRef(false);
   const desktopRemovalRef = useRef(new WeakSet<JitsiTrackLike>());
-  const videoTrackListenersRef = useRef(new Map<JitsiTrackLike, () => void>());
+  const videoTrackListenersRef = useRef(new Map<JitsiTrackLike, {
+    native: MediaStreamTrack | undefined;
+    cleanup: () => void;
+  }>());
   const videoRecoveryTimersRef = useRef(new Map<string, number>());
   const videoRecoveryAtRef = useRef(new Map<string, number>());
   const audioBusyRef = useRef(false);
   const audioIntentRef = useRef<boolean | null>(null);
+  const pushToTalkModeRef = useRef<boolean | null>(null);
+  const publishedMicrophoneMutedRef = useRef<boolean | null>(null);
   const audioCommandRef = useRef(Promise.resolve());
   const participantSessionsRef = useRef(new Map<string, number>());
   const videoBusyRef = useRef(false);
@@ -1117,9 +1124,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
         );
         const isScreenSharing = videoTrack?.getVideoType?.() === "desktop";
         const cameraOff = participant.getProperty?.(CAMERA_OFF_PROPERTY);
+        const microphoneMuted = participant.getProperty?.(MICROPHONE_MUTED_PROPERTY);
 
         return {
-          audioMuted: participant.isAudioMuted(),
+          audioMuted: microphoneMuted === "true" ||
+            (microphoneMuted !== "false" && participant.isAudioMuted()),
           audioTrack,
           audioTracks,
           avatarUrl:
@@ -1151,7 +1160,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
         };
       });
 
-    const audioMuted = !localAudio || localAudio.isMuted() || isTrackEnded(localAudio);
+    const localMicrophone = localAudio?.getTrack?.();
+    if (pushToTalkModeRef.current && localMicrophone?.readyState === "live") {
+      localMicrophone.enabled = audioIntentRef.current === false;
+    }
+    const audioMuted = !localAudio || isTrackEnded(localAudio) || localMicrophone?.enabled === false ||
+      ((!pushToTalkModeRef.current || !localMicrophone) && localAudio.isMuted());
     if (audioMuted) {
       setLocalAudioLevel(0);
     }
@@ -1195,13 +1209,17 @@ export function useJitsiConference(roomName: string): ConferenceController {
       },
       ...remote,
     ]);
-    if (publishedCameraOffRef.current !== videoMuted) {
-      publishedCameraOffRef.current = videoMuted;
+    for (const [property, previous, muted] of [
+      [CAMERA_OFF_PROPERTY, publishedCameraOffRef, videoMuted],
+      [MICROPHONE_MUTED_PROPERTY, publishedMicrophoneMutedRef, audioMuted],
+    ] as const) {
+      if (previous.current === muted) continue;
+      previous.current = muted;
       try {
-        conference.setLocalParticipantProperty?.(CAMERA_OFF_PROPERTY, String(videoMuted));
+        conference.setLocalParticipantProperty?.(property, String(muted));
       } catch (error) {
-        publishedCameraOffRef.current = null;
-        console.warn("Ninjitsi: could not publish camera state", error);
+        previous.current = null;
+        console.warn("Ninjitsi: could not publish media state", error);
       }
     }
   }, [watchLocalAudioLevel]);
@@ -1227,8 +1245,8 @@ export function useJitsiConference(roomName: string): ConferenceController {
     if (!conference || !library || disposedRef.current) return;
     const tracks = [...conference.getLocalTracks(), ...conference.getParticipants().flatMap(p => p.getTracks())]
       .filter(track => track.getType() === "video");
-    for (const [track, cleanup] of videoTrackListenersRef.current) {
-      if (!tracks.includes(track)) {
+    for (const [track, { native, cleanup }] of videoTrackListenersRef.current) {
+      if (!tracks.includes(track) || track.getTrack?.() !== native) {
         cleanup();
         videoTrackListenersRef.current.delete(track);
       }
@@ -1247,12 +1265,12 @@ export function useJitsiConference(roomName: string): ConferenceController {
       nativeTrack?.addEventListener("ended", refresh);
       nativeTrack?.addEventListener("mute", refresh);
       nativeTrack?.addEventListener("unmute", refresh);
-      videoTrackListenersRef.current.set(track, () => {
+      videoTrackListenersRef.current.set(track, { native: nativeTrack, cleanup: () => {
         events.forEach(event => track.removeEventListener?.(event, refresh));
         nativeTrack?.removeEventListener("ended", refresh);
         nativeTrack?.removeEventListener("mute", refresh);
         nativeTrack?.removeEventListener("unmute", refresh);
-      });
+      } });
     }
     scheduleParticipantSync();
     refreshVideoPolicy();
@@ -1296,7 +1314,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   const teardown = useCallback(async () => {
     disposedRef.current = true;
-    for (const cleanup of videoTrackListenersRef.current.values()) cleanup();
+    for (const { cleanup } of videoTrackListenersRef.current.values()) cleanup();
     videoTrackListenersRef.current.clear();
     for (const timer of videoRecoveryTimersRef.current.values()) window.clearTimeout(timer);
     videoRecoveryTimersRef.current.clear();
@@ -1317,6 +1335,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
     setMediaBusy("audio", false);
     setMediaBusy("video", false);
     setMediaBusy("desktop", false);
+    setIsDeviceSwitchBusy(false);
 
     if (conference) {
       const tracks = conference.getLocalTracks();
@@ -1402,17 +1421,20 @@ export function useJitsiConference(roomName: string): ConferenceController {
       localTileColorRef.current = normalizeProfileTileColor(options.tileColor);
       cameraOffIntentRef.current = options.startVideoMuted;
       publishedCameraOffRef.current = null;
+      pushToTalkModeRef.current ??= readPushToTalkPreference();
+      publishedMicrophoneMutedRef.current = null;
       localVideoBackgroundDataRef.current =
         options.videoBackgroundDataUrl || "";
       localVideoBackgroundRevisionRef.current =
         options.videoBackgroundDataUrl
           ? options.videoBackgroundRevision.slice(0, 180)
           : "";
-      setVideoBackgroundAvailable(Boolean(options.videoBackgroundDataUrl));
+      const backgroundAvailable = Boolean(localVideoBackgroundDataRef.current && localVideoBackgroundRevisionRef.current);
+      setVideoBackgroundAvailable(backgroundAvailable);
       videoBackgroundChannelOpenRef.current = false;
       if (!isRecovery) {
-        videoBackgroundEnabledRef.current = false;
-        setVideoBackgroundEnabledState(false);
+        videoBackgroundEnabledRef.current = backgroundAvailable;
+        setVideoBackgroundEnabledState(backgroundAvailable);
       }
       disposedRef.current = false;
       if (!isRecovery) {
@@ -1435,8 +1457,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
           options.videoBackgroundDataUrl,
         );
 
-        demoParticipants[0].audioMuted = options.startAudioMuted || readPushToTalkPreference();
+        demoParticipants[0].audioMuted = options.startAudioMuted || pushToTalkModeRef.current;
         demoParticipants[0].videoMuted = options.startVideoMuted;
+        demoParticipants[0].videoBackgroundEnabled = videoBackgroundEnabledRef.current;
         setParticipants(demoParticipants);
         audioIntentRef.current = demoParticipants[0].audioMuted;
         setIsAudioMuted(demoParticipants[0].audioMuted);
@@ -1482,7 +1505,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
           library.setLogLevel(library.logLevels.ERROR);
         }
 
-        const startAudioMuted = options.startAudioMuted || readPushToTalkPreference();
+        const startAudioMuted = options.startAudioMuted || pushToTalkModeRef.current === true;
         audioIntentRef.current = startAudioMuted;
         setIsAudioMuted(startAudioMuted);
         setIsVideoMuted(options.startVideoMuted);
@@ -1511,8 +1534,11 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 ? await createConfiguredAudioTrack(library, deviceId)
                 : await createLocalTrack(library, device, deviceId);
 
-              if (startMuted) {
-                await track.mute();
+              try {
+                if (startMuted) await track.mute();
+              } catch (error) {
+                await track.dispose().catch(() => undefined);
+                throw error;
               }
 
               return { device, ok: true as const, track };
@@ -2393,9 +2419,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
       const currentTrack = conference.getLocalTracks("audio").find(Boolean);
 
       if (currentTrack && !isTrackEnded(currentTrack)) {
-        if (muted) await currentTrack.mute();
-        else await currentTrack.unmute();
-        // A key-up may arrive while Jitsi's unmute promise is pending.
+        if (!pushToTalkModeRef.current || !currentTrack.getTrack?.()) {
+          if (muted) await currentTrack.mute();
+          else await currentTrack.unmute();
+        }
         const native = currentTrack.getTrack?.();
         if (native) native.enabled = audioIntentRef.current !== true;
       } else {
@@ -2412,8 +2439,10 @@ export function useJitsiConference(roomName: string): ConferenceController {
           return;
         }
 
-        if (audioIntentRef.current === true) await newTrack.mute();
         try {
+          const native = newTrack.getTrack?.();
+          if (pushToTalkModeRef.current && native) native.enabled = false;
+          else if (audioIntentRef.current === true) await newTrack.mute();
           if (currentTrack && conference.replaceTrack) {
             await conference.replaceTrack(currentTrack, newTrack);
             await currentTrack.dispose().catch(() => undefined);
@@ -2440,25 +2469,33 @@ export function useJitsiConference(roomName: string): ConferenceController {
     syncParticipants,
   ]);
 
-  const setAudioMuted = useCallback((muted: boolean) => {
+  const setAudioMuted = useCallback((muted: boolean, pushToTalk?: boolean) => {
+    if (pushToTalk !== undefined) pushToTalkModeRef.current = pushToTalk;
     audioIntentRef.current = muted;
+    const conference = conferenceRef.current;
+    const tracks = conference?.getLocalTracks("audio") ?? [];
     if (muted) {
-      // Close the native gate synchronously, even during an async unmute.
-      conferenceRef.current?.getLocalTracks("audio").forEach(track => {
+      for (const track of tracks) {
         const native = track.getTrack?.();
         if (native) native.enabled = false;
-      });
+      }
+    }
+    if (pushToTalkModeRef.current &&
+        (muted || (!audioBusyRef.current && tracks.some(track=>track.getTrack?.()?.readyState === "live")))) {
+      if (isDemo) return applyAudioMuted(muted);
+      syncParticipants();
+      return Promise.resolve();
     }
     audioCommandRef.current = audioCommandRef.current.then(async () => {
       // Device replacement owns the track until it finishes.
-      while (audioBusyRef.current && !disposedRef.current) {
+      while (audioBusyRef.current && conferenceRef.current === conference && !disposedRef.current) {
         await new Promise(resolve => window.setTimeout(resolve, 30));
       }
-      if (audioIntentRef.current !== muted) return;
+      if (conferenceRef.current !== conference || audioIntentRef.current !== muted) return;
       await applyAudioMuted(muted);
     }).catch(() => undefined);
     return audioCommandRef.current;
-  }, [applyAudioMuted]);
+  }, [applyAudioMuted, isDemo, syncParticipants]);
 
   const toggleAudio = useCallback(() => setAudioMuted(
     !(audioBusyRef.current ? audioIntentRef.current ?? isAudioMuted : isAudioMuted),
@@ -2492,51 +2529,58 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
     setError(null);
     setMediaBusy("video", true);
+    const isCurrent = () => !disposedRef.current && conferenceRef.current === conference;
 
     try {
       const currentTrack = conference
         .getLocalTracks("video")
         .find((candidate) => candidate.getVideoType?.() !== "desktop");
 
+      if (currentTrack && !cameraOffIntentRef.current && !isCameraOff(currentTrack)) {
+        await currentTrack.mute();
+        if (isCurrent()) cameraOffIntentRef.current = true;
+        return;
+      }
+
       if (currentTrack) {
-        const nextCameraOff = !(cameraOffIntentRef.current || isCameraOff(currentTrack));
-        if (nextCameraOff) await currentTrack.mute();
-        else await currentTrack.unmute();
-        if (conferenceRef.current === conference) {
-          cameraOffIntentRef.current = nextCameraOff;
-        }
-      } else {
-        const newTrack = await createLocalTrack(
-          library,
-          "video",
-          videoInputIdRef.current,
-        );
-
-        if (
-          disposedRef.current ||
-          conferenceRef.current !== conference
-        ) {
-          await newTrack.dispose();
-          return;
-        }
-
         try {
-          await conference.addTrack(newTrack);
-          if (conferenceRef.current === conference) {
+          // Jitsi can resume a camera it stopped intentionally by acquiring a new native track.
+          await currentTrack.unmute();
+          if (!isCurrent()) return;
+          if (!isTrackEnded(currentTrack) && !currentTrack.isMuted()) {
             cameraOffIntentRef.current = false;
+            return;
           }
-        } catch (publishError) {
-          await newTrack.dispose().catch(() => undefined);
-          throw publishError;
+        } catch (error) {
+          if (!isCurrent() || isMediaPermissionError(error)) throw error;
+          console.warn("Ninjitsi: could not resume camera track; replacing it", error);
         }
+        // Release the failed track before opening the camera again.
+        await conference.removeTrack(currentTrack);
+        await currentTrack.dispose();
+      }
+
+      if (!isCurrent()) return;
+      const newTrack = await createLocalTrack(library, "video", videoInputIdRef.current);
+      let published = false;
+      try {
+        if (isCurrent()) {
+          await conference.addTrack(newTrack);
+          published = isCurrent();
+          if (published) cameraOffIntentRef.current = false;
+        }
+      } finally {
+        if (!published) await newTrack.dispose().catch(() => undefined);
       }
     } catch (caughtError) {
-      setError(mediaErrorMessage("video", caughtError));
+      if (isCurrent()) setError(mediaErrorMessage("video", caughtError));
     } finally {
-      setMediaBusy("video", false);
-      syncParticipants();
+      if (isCurrent()) {
+        setMediaBusy("video", false);
+        syncVideoTracks();
+      }
     }
-  }, [isDemo, setMediaBusy, syncParticipants]);
+  }, [isDemo, setMediaBusy, syncVideoTracks]);
 
   const stopScreenShare = useCallback(async (conference: JitsiConferenceLike, desktop: JitsiTrackLike) => {
     if (desktopRemovalRef.current.has(desktop)) return;
@@ -2669,6 +2713,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
 
   const replaceInputTrack = useCallback(
     async (device: "audio" | "video", deviceId: string) => {
+      if (device === "video" && videoBusyRef.current) return;
       if (device === "audio") {
         audioInputIdRef.current = deviceId;
         setAudioInputIdState(deviceId);
@@ -2692,6 +2737,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       setError(null);
       setIsDeviceSwitchBusy(true);
       setMediaBusy(device, true);
+      const isCurrent = () => !disposedRef.current && conferenceRef.current === conference;
 
       try {
         const oldTrack = conference
@@ -2705,41 +2751,41 @@ export function useJitsiConference(roomName: string): ConferenceController {
           ? await createConfiguredAudioTrack(library, deviceId)
           : await createLocalTrack(library, device, deviceId);
 
-        if (oldTrack?.isMuted() ||
-            (device === "audio" && audioIntentRef.current === true) ||
-            (device === "video" && cameraOffIntentRef.current)) {
-          await newTrack.mute();
-        }
-
-        if (
-          disposedRef.current ||
-          conferenceRef.current !== conference
-        ) {
-          await newTrack.dispose();
-          return;
-        }
-
+        let published = false;
         try {
+          if (!isCurrent()) return;
+          const native = device === "audio" && pushToTalkModeRef.current ? newTrack.getTrack?.() : undefined;
+          if (native) {
+            native.enabled = false;
+          } else if (oldTrack?.isMuted() ||
+              (device === "audio" && audioIntentRef.current === true) ||
+              (device === "video" && cameraOffIntentRef.current)) {
+            await newTrack.mute();
+          }
+          if (!isCurrent()) return;
           if (oldTrack && conference.replaceTrack) {
             await conference.replaceTrack(oldTrack, newTrack);
           } else {
             await conference.addTrack(newTrack);
-            if (oldTrack) {
+            if (oldTrack && isCurrent()) {
               await conference.removeTrack(oldTrack);
             }
           }
-        } catch (publishError) {
-          await newTrack.dispose().catch(() => undefined);
-          throw publishError;
+          published = isCurrent();
+        } finally {
+          if (!published) await newTrack.dispose().catch(() => undefined);
         }
 
         await oldTrack?.dispose().catch(() => undefined);
       } catch (caughtError) {
-        setError(mediaErrorMessage(device, caughtError));
+        if (isCurrent()) setError(mediaErrorMessage(device, caughtError));
       } finally {
-        setMediaBusy(device, false);
-        setIsDeviceSwitchBusy(false);
-        syncParticipants();
+        if (isCurrent()) {
+          setMediaBusy(device, false);
+          setIsDeviceSwitchBusy(false);
+          if (device === "video") syncVideoTracks();
+          else syncParticipants();
+        }
       }
     },
     [
@@ -2748,6 +2794,7 @@ export function useJitsiConference(roomName: string): ConferenceController {
       persistMediaPreferences,
       setMediaBusy,
       syncParticipants,
+      syncVideoTracks,
     ],
   );
 
@@ -2837,7 +2884,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
               audioInputIdRef.current,
               enabled,
             );
-            if (wasMuted) {
+            const native = pushToTalkModeRef.current ? newTrack.getTrack?.() : undefined;
+            if (native) native.enabled = false;
+            else if (wasMuted) {
               await newTrack.mute();
             }
             if (disposedRef.current || conferenceRef.current !== conference) {
@@ -2870,7 +2919,9 @@ export function useJitsiConference(roomName: string): ConferenceController {
                 persistMediaPreferences();
               }
               try {
-                if (wasMuted) {
+                const native = pushToTalkModeRef.current ? restoredTrack.getTrack?.() : undefined;
+                if (native) native.enabled = false;
+                else if (wasMuted) {
                   await restoredTrack.mute();
                 }
                 await publishReplacement(restoredTrack);

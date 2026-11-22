@@ -34,6 +34,7 @@ import { CallControls } from "./CallControls";
 import { ChatSidebar } from "./ChatSidebar";
 import { ConnectionSummary } from "./ConnectionSummary";
 import { JoinOverlay } from "./JoinOverlay";
+import { MeetingToasts } from "./MeetingToasts";
 import { SettingsPanel } from "./SettingsPanel";
 import { VideoGrid } from "./VideoGrid";
 import styles from "./MeetingRoom.module.css";
@@ -478,6 +479,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
             status={conference.status}
             videoBackgroundAvailable={conference.videoBackgroundAvailable}
             videoBackgroundEnabled={conference.videoBackgroundEnabled}
+            videoBusy={conference.isVideoBusy}
             videoInputId={conference.videoInputId}
           />
           <button
@@ -545,25 +547,12 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         participants={conference.participants}
       />
 
-      {conference.status === "reconnecting" && (
-        <div className={styles.reconnecting}>
-          <WifiOff size={15} />
-          {tr(
-            "Connection interrupted. Reconnecting…",
-            "Связь прервалась. Восстанавливаем…",
-          )}
-        </div>
-      )}
-
-      {conference.error && conference.status === "joined" && (
-        <div className={styles.toast}>{conference.error}</div>
-      )}
-      {botChat.unavailable && !conference.error && conference.status === "joined" && (
-        <div className={styles.toast}>{tr(
-          "Bot connection unavailable. The meeting chat is still working. Rejoin if this persists.",
-          "Нет связи с API ботов. Чат встречи работает. Если ошибка не исчезает, перезайдите.",
-        )}</div>
-      )}
+      <MeetingToasts
+        conferenceError={conference.status === "joined" ? conference.error : null}
+        widgetError={conference.status === "joined" ? roomWidgets.error : undefined}
+        botUnavailable={conference.status === "joined" && botChat.unavailable}
+        reconnecting={conference.status === "reconnecting"}
+      />
 
       {showJoinOverlay && joinDetailsReady && (
         <JoinOverlay
@@ -577,7 +566,6 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         />
       )}
       <RoomWidgets room={roomName} widgets={roomWidgets.widgets} call={roomWidgets.call} avatarDataUrl={joinDetails.avatarDataUrl}/>
-      {roomWidgets.error&&!conference.error&&conference.status==='joined'&&<div className={styles.toast}>{roomWidgets.error}</div>}
     </main>
   );
 }

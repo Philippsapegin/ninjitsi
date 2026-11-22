@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useI18n } from "@/lib/i18n";
+import type { PushToTalkInput } from "@/hooks/usePushToTalk";
 import styles from "./CallControls.module.css";
 
 interface CallControlsProps {
@@ -25,8 +26,8 @@ interface CallControlsProps {
   onToggleVideo: () => void;
   pushToTalkEnabled: boolean;
   pushToTalkPressed: boolean;
-  onPushToTalkPress: () => void;
-  onPushToTalkRelease: () => void;
+  onPushToTalkPress: (input: PushToTalkInput) => void;
+  onPushToTalkRelease: (input: PushToTalkInput) => void;
 }
 
 interface ControlButtonProps {
@@ -37,8 +38,8 @@ interface ControlButtonProps {
   label: string;
   onClick: () => void;
   toggledOff?: boolean;
-  onPress?: () => void;
-  onRelease?: () => void;
+  onPress?: (input: PushToTalkInput) => void;
+  onRelease?: (input: PushToTalkInput) => void;
   children: React.ReactNode;
 }
 
@@ -64,21 +65,22 @@ function ControlButton({
       }`}
       onClick={onClick}
       onPointerDown={onPress ? (event) => {
-        if (event.button !== 0) return;
+        if (event.button !== 0 || !event.isPrimary) return;
         event.currentTarget.setPointerCapture(event.pointerId);
-        onPress();
+        onPress("pointer");
       } : undefined}
-      onPointerUp={onRelease}
-      onPointerCancel={onRelease}
-      onLostPointerCapture={onRelease}
-      onBlur={onRelease}
+      onPointerUp={onRelease ? event => { if (event.isPrimary) onRelease("pointer"); } : undefined}
+      onPointerCancel={onRelease ? event => { if (event.isPrimary) onRelease("pointer"); } : undefined}
+      onLostPointerCapture={onRelease ? event => { if (event.isPrimary) onRelease("pointer"); } : undefined}
+      onBlur={onRelease ? () => { onRelease("enter"); onRelease("pointer"); } : undefined}
       onKeyDown={onPress ? event => {
-        if ((event.code === "Space" || event.code === "Enter") && !event.repeat) {
-          event.preventDefault(); onPress();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          if (!event.repeat) onPress("enter");
         }
       } : undefined}
       onKeyUp={onRelease ? event => {
-        if (event.code === "Space" || event.code === "Enter") { event.preventDefault(); onRelease(); }
+        if (event.key === "Enter") { event.preventDefault(); onRelease("enter"); }
       } : undefined}
       style={{
         ...(onPress ? { touchAction: "none" } : {}),

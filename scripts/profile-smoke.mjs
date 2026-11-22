@@ -252,6 +252,12 @@ try {
   });
 
   await videoBackgroundToggle.waitFor();
+  if ((await videoBackgroundToggle.getAttribute("aria-checked")) !== "true") {
+    throw new Error("Загруженный фон должен быть включён при входе в комнату.");
+  }
+  await page.locator("[data-video-background]").waitFor();
+  await videoBackgroundToggle.click();
+  await page.locator("[data-video-background]").waitFor({ state: "hidden" });
   await videoBackgroundToggle.click();
   await page.locator("[data-video-background]").waitFor();
   await page.getByRole("button", { name: "Закрыть настройки" }).click();

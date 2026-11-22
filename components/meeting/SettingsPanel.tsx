@@ -39,6 +39,7 @@ interface SettingsPanelProps {
   status: MeetingStatus;
   videoBackgroundAvailable: boolean;
   videoBackgroundEnabled: boolean;
+  videoBusy: boolean;
   videoInputId: string;
 }
 
@@ -69,6 +70,7 @@ export function SettingsPanel({
   status,
   videoBackgroundAvailable,
   videoBackgroundEnabled,
+  videoBusy,
   videoInputId,
 }: SettingsPanelProps) {
   const { locale, setLocale, tr } = useI18n();
@@ -215,7 +217,7 @@ export function SettingsPanel({
             <div>
               <select
                 aria-label={tr("Select camera", "Выбрать камеру")}
-                disabled={busy || cameras.length === 0}
+                disabled={busy || videoBusy || cameras.length === 0}
                 onChange={(event) =>
                   void onVideoInputChange(event.target.value)
                 }
