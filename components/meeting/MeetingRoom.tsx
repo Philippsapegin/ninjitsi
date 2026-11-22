@@ -69,6 +69,11 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
   const [widgetToken,setWidgetToken]=useState<string|null>(null);
   const roomWidgets=useRoomWidgets(roomName,widgetToken,conference.status==='joined',conference.chatMessages);
   const botChat = useBotChat(roomName, eventsToken, conference.status === "joined", conference.chatMessages);
+  const chatMessages = useMemo(
+    () => [...conference.chatMessages, ...botChat.botMessages, ...roomWidgets.messages]
+      .sort((a, b) => a.timestamp - b.timestamp),
+    [conference.chatMessages, botChat.botMessages, roomWidgets.messages],
+  );
   const roomApiEnabled = useRoomApiEnabled();
   const [joinDetails, setJoinDetails] =
     useState<JoinOptions>(EMPTY_JOIN_DETAILS);
@@ -508,7 +513,7 @@ export function MeetingRoom({ roomName }: MeetingRoomProps) {
         <ChatSidebar
           disabled={conference.status !== "joined"}
           isSendingAttachment={conference.isSendingAttachment}
-          messages={[...conference.chatMessages, ...botChat.botMessages,...roomWidgets.messages].sort((a, b) => a.timestamp - b.timestamp)}
+          messages={chatMessages}
           onSend={conference.sendChatMessage}
           onSendAttachment={conference.sendChatAttachment}
           participants={conference.participants}

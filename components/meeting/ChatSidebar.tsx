@@ -5,6 +5,7 @@ import {
   DragEvent,
   FormEvent,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -141,6 +142,7 @@ export function ChatSidebar({
   const recipientPickerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previousMessageCountRef = useRef(messages.length);
+  const followLatestRef = useRef(true);
   const highlightTimerRef = useRef<number | null>(null);
   const remoteParticipants = participants.filter(
     (participant) => !participant.isLocal,
@@ -152,12 +154,13 @@ export function ChatSidebar({
     selectedRecipientIds.length > 0 &&
     selectedRecipients.length !== selectedRecipientIds.length;
 
-  useEffect(() => {
-    listRef.current?.scrollTo({
-      behavior: "smooth",
-      top: listRef.current.scrollHeight,
-    });
-  }, [messages]);
+  const latestMessageId = messages.at(-1)?.id;
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (open && list && followLatestRef.current) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }, [latestMessageId, open]);
 
   useEffect(() => {
     const previousCount = previousMessageCountRef.current;
@@ -400,7 +403,17 @@ export function ChatSidebar({
           </button>
         </header>
 
-        <div className={styles.messages} data-chat-messages ref={listRef}>
+        <div
+          className={styles.messages}
+          data-chat-messages
+          onScroll={({ currentTarget: list }) => {
+            if (open) {
+              followLatestRef.current =
+                list.scrollHeight - list.clientHeight - list.scrollTop <= 32;
+            }
+          }}
+          ref={listRef}
+        >
           {messages.length === 0 ? (
             <div className={styles.empty}>
               <MessageCircle size={20} />
