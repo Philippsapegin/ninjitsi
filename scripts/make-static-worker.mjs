@@ -28,10 +28,11 @@ writeFileSync(
     const acceptsHtml = (request.headers.get("Accept") ?? "").includes(
       "text/html",
     );
+    const isRoomPage = /^\\/room\\/[a-z0-9-]{1,80}\\/?$/i.test(url.pathname);
 
     if (
-      request.method === "GET" &&
-      acceptsHtml &&
+      (request.method === "GET" || (request.method === "HEAD" && isRoomPage)) &&
+      (acceptsHtml || isRoomPage) &&
       !url.pathname.startsWith("/_next/")
     ) {
       const indexUrl = new URL("/index.html", request.url);

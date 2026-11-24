@@ -978,8 +978,9 @@ async function handleStatic(request, response, pathname) {
   }
 
   const acceptsHtml = (request.headers.accept ?? "").includes("text/html");
+  const isRoomPage = /^\/room\/[a-z0-9-]{1,80}\/?$/i.test(decodedPath);
 
-  if (acceptsHtml) {
+  if (acceptsHtml || isRoomPage) {
     await sendFile(request, response, join(staticRoot, "index.html"));
     return;
   }
